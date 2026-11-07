@@ -103,6 +103,18 @@ func (c *Client) DeleteReport(ctx context.Context, name string) error {
 	return err
 }
 
+func (c *Client) ListProjects(ctx context.Context) ([]api.Project, error) {
+	var list api.ProjectList
+	_, err := c.do(ctx, http.MethodGet, "/v1/projects", nil, &list)
+	return list.Projects, err
+}
+
+func (c *Client) RenameProject(ctx context.Context, from, to string) (api.RenameProjectResult, error) {
+	var res api.RenameProjectResult
+	_, err := c.do(ctx, http.MethodPost, "/v1/projects/rename", api.RenameProject{From: from, To: to}, &res)
+	return res, err
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) (int, error) {
 	var body io.Reader
 	if in != nil {

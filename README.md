@@ -59,6 +59,8 @@ echo "длинная мысль" | bin/epi add -t "заголовок" -tag a,b 
 bin/epi inbox
 bin/epi report review          # еженедельное ревью: входящие, забытые важные идеи, неделя
 bin/epi report all -p проект   # всё по проекту
+bin/epi project                # проекты и число заметок
+bin/epi project rename старое новое   # переименовать или слить с существующим
 ```
 
 Отчёт — JSON-фильтр. Встроенные: `review`, `inbox`, `stale`, `week`, `all`. Свой:
@@ -85,7 +87,7 @@ claude mcp add epinoema --scope user \
 ```
 
 Инструменты: `add_note`, `list_inbox`, `search`, `get_note`, `update_meta`, `link`,
-`list_reports`, `run_report`, `save_report`, `query`. `update_meta` меняет только метаданные,
+`list_reports`, `run_report`, `save_report`, `query`, `list_projects`, `rename_project`. `update_meta` меняет только метаданные,
 текст заметки агент изменить не может. `query` — произвольный SELECT для разовых отчётов:
 под ролью `epinoema_agent_ro`, только чтение, с таймаутом 5 с; строки режет RLS, токены и
 пользователи недоступны, подменить пользователя нельзя (`TestQueryCannotEscape`).

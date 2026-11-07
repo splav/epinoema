@@ -94,3 +94,25 @@ type QueryResult struct {
 	Rows      []json.RawMessage `json:"rows"`
 	Truncated bool              `json:"truncated"`
 }
+
+type Project struct {
+	Name        string    `json:"name"`
+	Notes       int64     `json:"notes"`
+	LastUpdated time.Time `json:"last_updated"`
+}
+
+type ProjectList struct {
+	Projects []Project `json:"projects"`
+}
+
+// RenameProject — тело POST /v1/projects/rename. Если проект To уже есть,
+// заметки From присоединяются к нему.
+type RenameProject struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type RenameProjectResult struct {
+	Renamed int64 `json:"renamed"`
+	Merged  bool  `json:"merged"`
+}

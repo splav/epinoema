@@ -21,6 +21,7 @@ const usage = `epi — база идей и заметок
   epi add [флаги] "текст"     записать во входящие; без текста читает stdin
   epi inbox [-n 50]           показать входящие
   epi report [NAME]           отчёты; epi report review — еженедельное ревью
+  epi project [rename A B]    проекты; rename переименовывает или сливает с B
   epi mcp                     MCP-сервер для агента по stdio; токен с -actor agent
 `
 
@@ -44,6 +45,8 @@ func main() {
 		err = runAdd(args)
 	case "inbox":
 		err = runInbox(args)
+	case "project":
+		err = runProject(args)
 	case "report":
 		err = runReport(args)
 	case "mcp":

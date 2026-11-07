@@ -89,6 +89,17 @@ func New(c *client.Client) *mcp.Server {
 			"Видны только заметки пользователя и выданные ему.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, t.query)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_projects",
+		Description: "Проекты пользователя: имя, число заметок, когда менялись.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, t.listProjects)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "rename_project",
+		Description: "Переименовать проект во всех заметках пользователя. Если проект с новым именем уже есть, заметки присоединяются к нему. " +
+			"Вызывай только после подтверждения пользователя. Каждая заметка получает ревизию в истории.",
+		Annotations: &mcp.ToolAnnotations{IdempotentHint: true},
+	}, t.renameProject)
 	return s
 }
 
@@ -348,4 +359,23 @@ func (t tools) query(ctx context.Context, _ *mcp.CallToolRequest, in QueryIn) (*
 		out.Rows = append(out.Rows, row)
 	}
 	return nil, out, nil
+}
+
+type ListProjectsOut struct {
+	Projects []api.Project `json:"projects"`
+}
+
+func (t tools) listProjects(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, ListProjectsOut, error) {
+	projects, err := t.c.ListProjects(ctx)
+	return nil, ListProjectsOut{Projects: projects}, err
+}
+
+type RenameProjectIn struct {
+	From string `json:"from" jsonschema:"текущее имя проекта"`
+	To   string `json:"to" jsonschema:"новое имя; если такой проект есть, заметки сольются с ним"`
+}
+
+func (t tools) renameProject(ctx context.Context, _ *mcp.CallToolRequest, in RenameProjectIn) (*mcp.CallToolResult, api.RenameProjectResult, error) {
+	res, err := t.c.RenameProject(ctx, in.From, in.To)
+	return nil, res, err
 }

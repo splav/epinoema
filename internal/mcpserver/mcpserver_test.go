@@ -59,7 +59,7 @@ func TestTools(t *testing.T) {
 	for _, tool := range res.Tools {
 		names = append(names, tool.Name)
 	}
-	want := "add_note,get_note,link,list_inbox,list_reports,query,run_report,save_report,search,update_meta"
+	want := "add_note,get_note,link,list_inbox,list_projects,list_reports,query,rename_project,run_report,save_report,search,update_meta"
 	if got := strings.Join(names, ","); got != want {
 		t.Errorf("tools = %s, want %s", got, want)
 	}
@@ -176,5 +176,26 @@ func TestReportsAndQuery(t *testing.T) {
 	}
 	if res := call(t, cs, "query", map[string]any{"sql": "select token_hash from api_tokens"}, nil); !res.IsError {
 		t.Error("query к api_tokens прошёл")
+	}
+}
+
+func TestProjects(t *testing.T) {
+	e := testenv.New(t)
+	_, agentTok := e.User(t, "alice", "agent")
+	cs := session(t, e, agentTok)
+	call(t, cs, "add_note", map[string]any{"body": "a", "project": "old"}, nil)
+
+	var res struct {
+		Renamed int
+		Merged  bool
+	}
+	call(t, cs, "rename_project", map[string]any{"from": "old", "to": "new"}, &res)
+	if res.Renamed != 1 || res.Merged {
+		t.Errorf("rename_project: %+v", res)
+	}
+	var list struct{ Projects []struct{ Name string } }
+	call(t, cs, "list_projects", nil, &list)
+	if len(list.Projects) != 1 || list.Projects[0].Name != "new" {
+		t.Errorf("list_projects: %+v", list)
 	}
 }
