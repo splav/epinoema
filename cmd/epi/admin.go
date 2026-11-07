@@ -64,6 +64,22 @@ func runServe(args []string) error {
 	if owner || super {
 		return errors.New("EPI_DB подключается под ролью, которая обходит RLS; нужна epinoema_app")
 	}
+	// Миграции 00003 и 00004, применённые не суперпользователем, проходят
+	// с предупреждением и ничего не меняют. Без них агент через query может
+	// выдать себя за другого пользователя или оставить блокировки на соединении.
+	var leaked []string
+	if err := pool.QueryRow(ctx, `
+		SELECT coalesce(array_agg(p.oid::regprocedure::text), '{}') FROM pg_proc p
+		WHERE p.pronamespace = 'pg_catalog'::regnamespace
+		  AND (p.proname IN ('set_config', 'pg_logical_emit_message')
+		       OR p.proname LIKE 'pg\_advisory\_%' OR p.proname LIKE 'pg\_try\_advisory\_%')
+		  AND has_function_privilege('epinoema_agent_ro', p.oid, 'EXECUTE')`,
+	).Scan(&leaked); err != nil {
+		return fmt.Errorf("проверка прав агента: %w", err)
+	}
+	if len(leaked) > 0 {
+		return fmt.Errorf("агенту доступны %v: примените миграции суперпользователем (epi migrate)", leaked)
+	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	srv := &http.Server{

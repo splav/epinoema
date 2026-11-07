@@ -34,14 +34,25 @@ type QueryResult struct {
 //   - транзакция read-only и всегда откатывается, так что не меняет ни данные,
 //     ни настройки соединения из пула;
 //   - set_config роли агента не доступен (миграция 00003), поэтому подменить
-//     app.user_id или роль внутри SELECT нельзя.
+//     app.user_id или роль внутри SELECT нельзя;
+//   - advisory-блокировки и нетранзакционная запись в WAL тоже закрыты (00004):
+//     их последствия откат не отменяет.
 func ReadOnlyQuery(ctx context.Context, pool *pgxpool.Pool, userID string, actor Actor, sql string, limit int) (QueryResult, error) {
 	sql = strings.TrimRight(strings.TrimSpace(sql), "; \t\n")
 	if sql == "" {
 		return QueryResult{}, fmt.Errorf("empty query")
 	}
 
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	defer conn.Release()
+	// Страховка поверх миграции 00004: блокировка уровня сессии пережила бы
+	// откат и осталась на соединении, которое вернётся в пул.
+	defer conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock_all()")
+
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -59,9 +70,13 @@ func ReadOnlyQuery(ctx context.Context, pool *pgxpool.Pool, userID string, actor
 	}
 
 	// Перевод строки перед ")" — чтобы комментарий "--" в конце запроса
-	// не закомментировал обёртку.
-	wrapped := "SELECT row_to_json(q)::text FROM (\n" + sql + "\n) AS q LIMIT $1"
-	rows, err := tx.Query(ctx, wrapped, pgx.QueryExecModeExec, limit+1)
+	// не закомментировал обёртку. Строку больше предела Postgres заменяет
+	// на NULL, чтобы она не приехала в память сервиса целиком.
+	wrapped := `SELECT CASE WHEN octet_length(j) > $2 THEN NULL ELSE j END
+		FROM (SELECT row_to_json(q)::text AS j FROM (
+` + sql + `
+) AS q LIMIT $1) AS s`
+	rows, err := tx.Query(ctx, wrapped, pgx.QueryExecModeExec, limit+1, maxQueryBytes)
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -70,16 +85,16 @@ func ReadOnlyQuery(ctx context.Context, pool *pgxpool.Pool, userID string, actor
 	res := QueryResult{Rows: []json.RawMessage{}}
 	size := 0
 	for rows.Next() {
-		var row string
+		var row *string
 		if err := rows.Scan(&row); err != nil {
 			return QueryResult{}, err
 		}
-		if len(res.Rows) == limit || size+len(row) > maxQueryBytes {
+		if row == nil || len(res.Rows) == limit || size+len(*row) > maxQueryBytes {
 			res.Truncated = true
 			break
 		}
-		size += len(row)
-		res.Rows = append(res.Rows, json.RawMessage(row))
+		size += len(*row)
+		res.Rows = append(res.Rows, json.RawMessage(*row))
 	}
 	return res, rows.Err()
 }

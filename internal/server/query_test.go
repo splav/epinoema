@@ -1,7 +1,10 @@
 package server_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -44,27 +47,47 @@ func TestQueryCannotEscape(t *testing.T) {
 	db.QueryTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { db.QueryTimeout = 5 * time.Second })
 
-	attacks := map[string]string{
-		"подмена пользователя": "select set_config('app.user_id', '" + bobID + "', true), (select string_agg(body, ',') from notes)",
-		"подмена роли":         "select set_config('role', 'epinoema_app', true), (select string_agg(body, ',') from notes)",
-		"через query_to_xml":   "select query_to_xml('select set_config(''app.user_id'', ''" + bobID + "'', true)', false, false, '')",
-		"SET перед SELECT":     "set local app.user_id = '" + bobID + "'; select body from notes",
-		"RESET ROLE":           "reset role",
-		"DO-блок":              "do $$ begin perform set_config('app.user_id', '" + bobID + "', true); end $$",
-		"выход из подзапроса":  "select 1) q; select body from notes; select * from (select 1",
-		"токены":               "select token_hash from api_tokens",
-		"пользователи":         "select handle from users",
-		"удаление":             "delete from notes returning body",
-		"удаление в CTE":       "with d as (delete from notes returning body) select * from d",
-		"блокировка":           "select body from notes for update",
-		"зависание":            "select pg_sleep(5)",
+	// Для каждой атаки — фрагмент ожидаемой ошибки (варианты через |): атака,
+	// упавшая по посторонней причине (опечатка в тесте), не должна считаться отражённой.
+	attacks := []struct{ name, sql, want string }{
+		{"подмена пользователя", "select set_config('app.user_id', '" + bobID + "', true), (select string_agg(body, ',') from notes)", "permission denied for function set_config"},
+		{"подмена роли", "select set_config('role', 'epinoema_app', true), (select string_agg(body, ',') from notes)", "permission denied for function set_config"},
+		{"через query_to_xml", "select query_to_xml('select set_config(''app.user_id'', ''" + bobID + "'', true)', false, false, '')", "permission denied for function set_config"},
+		{"SET перед SELECT", "set local app.user_id = '" + bobID + "'; select body from notes", "syntax error"},
+		{"RESET ROLE", "reset role", "syntax error"},
+		{"DO-блок", "do $$ begin perform set_config('app.user_id', '" + bobID + "', true); end $$", "syntax error"},
+		{"выход из подзапроса", "select 1) q; select body from notes; select * from (select 1", "syntax error|multiple commands"},
+		{"токены", "select token_hash from api_tokens", "permission denied for table api_tokens"},
+		{"пользователи", "select handle from users", "permission denied for table users"},
+		{"удаление", "delete from notes returning body", "syntax error"},
+		{"удаление в CTE", "with d as (delete from notes returning body) select * from d", "must be at the top level"},
+		{"блокировка строк", "select body from notes for update", "read-only transaction"},
+		{"зависание", "select pg_sleep(5)", "timed out"},
+		// Блокировки уровня сессии переживают ROLLBACK и висят на соединении пула;
+		// в большом количестве они исчерпывают общую память всего кластера.
+		{"advisory lock", "select pg_advisory_lock(42)", "permission denied for function pg_advisory_lock"},
+		{"try advisory lock", "select pg_try_advisory_lock(1, 2)", "permission denied for function pg_try_advisory_lock"},
+		{"shared advisory lock", "select pg_advisory_lock_shared(42)", "permission denied for function pg_advisory_lock_shared"},
+		// Нетранзакционная запись в WAL: ROLLBACK её не отменяет.
+		{"запись в WAL", "select pg_logical_emit_message(false, 'x', 'y')", "permission denied for function pg_logical_emit_message"},
 	}
-	for name, sql := range attacks {
-		var res api.QueryResult
-		code := e.Do(t, "POST", "/v1/query", alice, api.Query{SQL: sql}, &res)
-		if code == 200 {
-			t.Errorf("%s: прошло, rows=%s", name, res.Rows)
+	for _, a := range attacks {
+		code, msg := queryErr(t, e, alice, a.sql)
+		if code == 200 || !containsAny(msg, strings.Split(a.want, "|")) {
+			t.Errorf("%s: %d %q, want ошибку с %q", a.name, code, msg, a.want)
 		}
+	}
+
+	// Строка больше предела не должна целиком приезжать в память сервиса.
+	var big api.QueryResult
+	if code := e.Do(t, "POST", "/v1/query", alice, api.Query{SQL: "select repeat('x', 5000000) as a"}, &big); code != 200 || len(big.Rows) != 0 || !big.Truncated {
+		t.Errorf("огромная строка: %d, rows=%d, truncated=%v", code, len(big.Rows), big.Truncated)
+	}
+
+	// Ни одно соединение не держит advisory-блокировок.
+	var locks int
+	if err := e.Pool.QueryRow(context.Background(), "select count(*) from pg_locks where locktype = 'advisory'").Scan(&locks); err != nil || locks != 0 {
+		t.Errorf("advisory-блокировок после атак: %d (err %v)", locks, err)
 	}
 
 	// После атак соединения пула чистые: Алиса видит только своё, Боб — своё.
@@ -80,4 +103,29 @@ func TestQueryCannotEscape(t *testing.T) {
 	if code := e.Do(t, "GET", "/v1/notes/"+secret.ID, bob, nil, nil); code != 200 {
 		t.Errorf("заметка Боба пропала: %d", code)
 	}
+}
+
+// queryErr выполняет запрос и возвращает код ответа и текст ошибки.
+func queryErr(t *testing.T, e *env, tok, sql string) (int, string) {
+	t.Helper()
+	b, _ := json.Marshal(api.Query{SQL: sql})
+	req, _ := http.NewRequest("POST", e.URL+"/v1/query", bytes.NewReader(b))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var apiErr api.Error
+	json.NewDecoder(resp.Body).Decode(&apiErr)
+	return resp.StatusCode, apiErr.Error
+}
+
+func containsAny(s string, subs []string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
