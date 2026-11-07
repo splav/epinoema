@@ -45,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("PATCH /v1/notes/{id}", s.updateMeta)
 	authed.HandleFunc("POST /v1/links", s.createLink)
 	authed.HandleFunc("GET /v1/search", s.search)
+	authed.HandleFunc("POST /v1/query", s.query)
 	mux.Handle("/v1/", s.auth(authed))
 	return mux
 }
@@ -266,6 +267,39 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) query(w http.ResponseWriter, r *http.Request) {
+	var req api.Query
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = 100
+	}
+	if req.Limit < 1 || req.Limit > 500 {
+		writeError(w, http.StatusBadRequest, "limit must be 1..500")
+		return
+	}
+	p := principalOf(r)
+	res, err := db.ReadOnlyQuery(r.Context(), s.pool, p.userID, p.actor, req.SQL, req.Limit)
+	if err != nil {
+		// Ошибки самого запроса возвращаются автору: агенту они нужны, чтобы
+		// исправить SQL. Строк из чужих данных в них нет — их отрезал RLS.
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.As(err, &pgErr) && pgErr.Code == "57014":
+			writeError(w, http.StatusBadRequest, "query timed out after "+db.QueryTimeout.String())
+		case errors.As(err, &pgErr):
+			writeError(w, http.StatusBadRequest, "sql: "+pgErr.Message)
+		case err.Error() == "empty query":
+			writeError(w, http.StatusBadRequest, "sql is required")
+		default:
+			s.internal(w, r, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, api.QueryResult{Rows: res.Rows, Truncated: res.Truncated})
 }
 
 // dbError переводит ошибки базы в ответы. Чужая заметка для RLS не существует,

@@ -82,3 +82,15 @@ type Me struct {
 	Handle string `json:"handle"`
 	Actor  string `json:"actor"`
 }
+
+// Query — тело POST /v1/query: произвольный read-only SELECT для разовых отчётов.
+type Query struct {
+	SQL   string `json:"sql"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+// QueryResult — строки как объекты {колонка: значение} в порядке колонок запроса.
+type QueryResult struct {
+	Rows      []json.RawMessage `json:"rows"`
+	Truncated bool              `json:"truncated"`
+}
