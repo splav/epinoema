@@ -1,7 +1,7 @@
 # Epinoema
 
 Self-hosted база идей и заметок. Один бинарник `epi`: сервер API, админка и CLI.
-Статус: ранний MVP, этап 0 (захват). Лицензия MIT.
+Статус: ранний MVP, этапы 0–1 (захват и агент). Лицензия MIT.
 
 ```sh
 go install github.com/splav/epinoema/cmd/epi@latest
@@ -45,8 +45,30 @@ echo "длинная мысль" | bin/epi add -t "заголовок" -tag a,b 
 bin/epi inbox
 ```
 
-Агенту — отдельный токен: `bin/epi token create -user $USER -actor agent -name claude-code`.
-Так в истории правок видно, что менял агент.
+## Агент (MCP)
+
+`epi mcp` — stdio MCP-сервер поверх того же API. Агенту нужен свой токен: так в истории
+правок видно, что менял агент, а `epi mcp` с токеном человека не запустится.
+
+```sh
+AGENT_TOKEN=$(bin/epi token create -user $USER -actor agent -name claude-code)
+claude mcp add epinoema --scope user \
+  --env EPI_TOKEN=$AGENT_TOKEN --env EPI_URL=http://127.0.0.1:7777 \
+  -- "$PWD/bin/epi" mcp
+```
+
+Инструменты: `add_note`, `list_inbox`, `search`, `get_note`, `update_meta`, `link`.
+`update_meta` меняет только метаданные, текст заметки агент изменить не может.
+
+Правила записи и разбора входящих — в [`skills/epinoema-inbox/SKILL.md`](skills/epinoema-inbox/SKILL.md).
+Краткую версию MCP-сервер сам отдаёт клиенту при подключении. Полную подключите в Claude Code:
+
+```sh
+ln -s "$PWD/skills/epinoema-inbox" ~/.claude/skills/epinoema-inbox
+```
+
+После этого «разбери входящие» в Claude Code покажет таблицу предложений и применит
+их после подтверждения.
 
 ## Разработка
 
@@ -60,13 +82,16 @@ EPI_TEST_ADMIN_DB=postgres://localhost/postgres go test ./...
 
 | Путь | Что там |
 | --- | --- |
-| `cmd/epi` | подкоманды: `migrate`, `serve`, `token create`, `add`, `inbox` |
+| `cmd/epi` | подкоманды: `migrate`, `serve`, `token create`, `add`, `inbox`, `mcp` |
 | `internal/db/migrations` | goose-миграции, встроены в бинарник |
 | `internal/db/queries` | SQL для sqlc; `dbq` — сгенерированный код, руками не править |
 | `internal/db` | пул, миграции, `InTx` — транзакция от имени пользователя |
 | `internal/server` | HTTP API и авторизация по токену |
 | `internal/api` | JSON-контракт API для сервера и клиентов |
-| `internal/client` | HTTP-клиент для CLI |
+| `internal/client` | HTTP-клиент для CLI и MCP |
+| `internal/mcpserver` | MCP-сервер: инструменты агента поверх клиента |
+| `internal/testenv` | временная база и сервер для интеграционных тестов |
+| `skills/epinoema-inbox` | правила для агента |
 
 ## Известные ограничения
 

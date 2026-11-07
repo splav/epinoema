@@ -10,9 +10,9 @@ func ptr[T any](v T) *T { return &v }
 
 func TestMe(t *testing.T) {
 	e := newEnv(t)
-	userID, tok := e.user(t, "alice", "agent")
+	userID, tok := e.User(t, "alice", "agent")
 	var me api.Me
-	if code := e.do(t, "GET", "/v1/me", tok, nil, &me); code != 200 {
+	if code := e.Do(t, "GET", "/v1/me", tok, nil, &me); code != 200 {
 		t.Fatalf("me: %d", code)
 	}
 	if me.UserID != userID || me.Handle != "alice" || me.Actor != "agent" {
@@ -22,12 +22,12 @@ func TestMe(t *testing.T) {
 
 func TestUpdateMeta(t *testing.T) {
 	e := newEnv(t)
-	_, tok := e.user(t, "alice", "user")
+	_, tok := e.User(t, "alice", "user")
 	var n api.Note
-	e.do(t, "POST", "/v1/notes", tok, api.CreateNote{Title: ptr("старое"), Body: "текст", Project: ptr("epi"), Tags: []string{"a"}}, &n)
+	e.Do(t, "POST", "/v1/notes", tok, api.CreateNote{Title: ptr("старое"), Body: "текст", Project: ptr("epi"), Tags: []string{"a"}}, &n)
 
 	var got api.Note
-	code := e.do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{Kind: ptr("idea"), Status: ptr("active"), Importance: ptr[int16](3)}, &got)
+	code := e.Do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{Kind: ptr("idea"), Status: ptr("active"), Importance: ptr[int16](3)}, &got)
 	if code != 200 {
 		t.Fatalf("patch: %d", code)
 	}
@@ -37,46 +37,46 @@ func TestUpdateMeta(t *testing.T) {
 	}
 
 	// Пустые значения очищают поля.
-	e.do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{Title: ptr(""), Project: ptr(""), Importance: ptr[int16](0), Tags: &[]string{}}, &got)
+	e.Do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{Title: ptr(""), Project: ptr(""), Importance: ptr[int16](0), Tags: &[]string{}}, &got)
 	if got.Title != nil || got.Project != nil || got.Importance != nil || len(got.Tags) != 0 {
 		t.Errorf("очистка: %+v", got)
 	}
 
-	if code := e.do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{}, nil); code != 400 {
+	if code := e.Do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{}, nil); code != 400 {
 		t.Errorf("пустой patch: %d, want 400", code)
 	}
-	if code := e.do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{Status: ptr("archived")}, nil); code != 400 {
+	if code := e.Do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{Status: ptr("archived")}, nil); code != 400 {
 		t.Errorf("неизвестный статус: %d, want 400", code)
 	}
-	if code := e.do(t, "PATCH", "/v1/notes/"+n.ID, tok, map[string]any{"body": "x"}, nil); code != 400 {
+	if code := e.Do(t, "PATCH", "/v1/notes/"+n.ID, tok, map[string]any{"body": "x"}, nil); code != 400 {
 		t.Errorf("правка текста через meta: %d, want 400", code)
 	}
 
-	_, bob := e.user(t, "bob", "user")
-	if code := e.do(t, "PATCH", "/v1/notes/"+n.ID, bob, api.UpdateMeta{Status: ptr("done")}, nil); code != 404 {
+	_, bob := e.User(t, "bob", "user")
+	if code := e.Do(t, "PATCH", "/v1/notes/"+n.ID, bob, api.UpdateMeta{Status: ptr("done")}, nil); code != 404 {
 		t.Errorf("Боб правит чужую заметку: %d, want 404", code)
 	}
 }
 
 func TestLinks(t *testing.T) {
 	e := newEnv(t)
-	_, alice := e.user(t, "alice", "user")
-	_, bob := e.user(t, "bob", "user")
+	_, alice := e.User(t, "alice", "user")
+	_, bob := e.User(t, "bob", "user")
 	var a, b, foreign api.Note
-	e.do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "a"}, &a)
-	e.do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "b"}, &b)
-	e.do(t, "POST", "/v1/notes", bob, api.CreateNote{Body: "чужая"}, &foreign)
+	e.Do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "a"}, &a)
+	e.Do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "b"}, &b)
+	e.Do(t, "POST", "/v1/notes", bob, api.CreateNote{Body: "чужая"}, &foreign)
 
 	link := api.CreateLink{SrcID: b.ID, DstID: a.ID, Kind: "derived_from"}
-	if code := e.do(t, "POST", "/v1/links", alice, link, nil); code != 201 {
+	if code := e.Do(t, "POST", "/v1/links", alice, link, nil); code != 201 {
 		t.Errorf("create: %d, want 201", code)
 	}
-	if code := e.do(t, "POST", "/v1/links", alice, link, nil); code != 200 {
+	if code := e.Do(t, "POST", "/v1/links", alice, link, nil); code != 200 {
 		t.Errorf("повтор: %d, want 200", code)
 	}
 
 	var detail api.NoteDetail
-	e.do(t, "GET", "/v1/notes/"+a.ID, alice, nil, &detail)
+	e.Do(t, "GET", "/v1/notes/"+a.ID, alice, nil, &detail)
 	if len(detail.Links) != 1 || detail.Links[0].SrcID != b.ID || detail.Links[0].Kind != "derived_from" {
 		t.Errorf("входящая связь не видна у цели: %+v", detail.Links)
 	}
@@ -86,26 +86,26 @@ func TestLinks(t *testing.T) {
 		"от чужой заметки": {SrcID: foreign.ID, DstID: a.ID},
 		"несуществующая":   {SrcID: a.ID, DstID: "00000000-0000-0000-0000-000000000000"},
 	} {
-		if code := e.do(t, "POST", "/v1/links", alice, l, nil); code != 404 {
+		if code := e.Do(t, "POST", "/v1/links", alice, l, nil); code != 404 {
 			t.Errorf("%s: %d, want 404", name, code)
 		}
 	}
-	if code := e.do(t, "POST", "/v1/links", alice, api.CreateLink{SrcID: a.ID, DstID: a.ID}, nil); code != 400 {
+	if code := e.Do(t, "POST", "/v1/links", alice, api.CreateLink{SrcID: a.ID, DstID: a.ID}, nil); code != 400 {
 		t.Errorf("сама на себя: %d, want 400", code)
 	}
 }
 
 func TestSearch(t *testing.T) {
 	e := newEnv(t)
-	_, alice := e.user(t, "alice", "user")
-	_, bob := e.user(t, "bob", "user")
+	_, alice := e.User(t, "alice", "user")
+	_, bob := e.User(t, "bob", "user")
 	var ru, en, title api.Note
 	var yo api.Note
-	e.do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "Разобрать идеи про семантический поиск"}, &ru)
-	e.do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "Спросить ребенка про школу"}, &yo)
-	e.do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "Try running migrations on startup"}, &en)
-	e.do(t, "POST", "/v1/notes", alice, api.CreateNote{Title: ptr("Embeddings через pgvector"), Body: "потом"}, &title)
-	e.do(t, "POST", "/v1/notes", bob, api.CreateNote{Body: "идея Боба про поиск"}, nil)
+	e.Do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "Разобрать идеи про семантический поиск"}, &ru)
+	e.Do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "Спросить ребенка про школу"}, &yo)
+	e.Do(t, "POST", "/v1/notes", alice, api.CreateNote{Body: "Try running migrations on startup"}, &en)
+	e.Do(t, "POST", "/v1/notes", alice, api.CreateNote{Title: ptr("Embeddings через pgvector"), Body: "потом"}, &title)
+	e.Do(t, "POST", "/v1/notes", bob, api.CreateNote{Body: "идея Боба про поиск"}, nil)
 
 	cases := []struct{ q, want string }{
 		{"идея", ru.ID},       // snowball давал «иде» и «ид»; hunspell сводит к «идея»
@@ -119,7 +119,7 @@ func TestSearch(t *testing.T) {
 	}
 	for _, c := range cases {
 		var res api.NoteList
-		if code := e.do(t, "GET", "/v1/search?q="+urlq(c.q), alice, nil, &res); code != 200 {
+		if code := e.Do(t, "GET", "/v1/search?q="+urlq(c.q), alice, nil, &res); code != 200 {
 			t.Fatalf("%q: %d", c.q, code)
 		}
 		if len(res.Notes) == 0 || res.Notes[0].ID != c.want {
@@ -131,7 +131,7 @@ func TestSearch(t *testing.T) {
 			}
 		}
 	}
-	if code := e.do(t, "GET", "/v1/search?q=", alice, nil, nil); code != 400 {
+	if code := e.Do(t, "GET", "/v1/search?q=", alice, nil, nil); code != 400 {
 		t.Errorf("пустой запрос: %d, want 400", code)
 	}
 }

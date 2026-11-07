@@ -27,29 +27,60 @@ func New(baseURL, token string) *Client {
 
 func (c *Client) CreateNote(ctx context.Context, req api.CreateNote) (api.Note, error) {
 	var note api.Note
-	err := c.do(ctx, http.MethodPost, "/v1/notes", req, &note)
+	_, err := c.do(ctx, http.MethodPost, "/v1/notes", req, &note)
 	return note, err
 }
 
 func (c *Client) ListNotes(ctx context.Context, status string, limit int) ([]api.Note, error) {
 	q := url.Values{"status": {status}, "limit": {strconv.Itoa(limit)}}
 	var list api.NoteList
-	err := c.do(ctx, http.MethodGet, "/v1/notes?"+q.Encode(), nil, &list)
+	_, err := c.do(ctx, http.MethodGet, "/v1/notes?"+q.Encode(), nil, &list)
 	return list.Notes, err
 }
 
-func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
+func (c *Client) Me(ctx context.Context) (api.Me, error) {
+	var me api.Me
+	_, err := c.do(ctx, http.MethodGet, "/v1/me", nil, &me)
+	return me, err
+}
+
+func (c *Client) GetNote(ctx context.Context, id string) (api.NoteDetail, error) {
+	var d api.NoteDetail
+	_, err := c.do(ctx, http.MethodGet, "/v1/notes/"+url.PathEscape(id), nil, &d)
+	return d, err
+}
+
+func (c *Client) UpdateMeta(ctx context.Context, id string, m api.UpdateMeta) (api.Note, error) {
+	var note api.Note
+	_, err := c.do(ctx, http.MethodPatch, "/v1/notes/"+url.PathEscape(id), m, &note)
+	return note, err
+}
+
+// CreateLink возвращает false, если такая связь уже была.
+func (c *Client) CreateLink(ctx context.Context, l api.CreateLink) (bool, error) {
+	code, err := c.do(ctx, http.MethodPost, "/v1/links", l, &api.CreateLink{})
+	return code == http.StatusCreated, err
+}
+
+func (c *Client) Search(ctx context.Context, query string, limit int) ([]api.Note, error) {
+	q := url.Values{"q": {query}, "limit": {strconv.Itoa(limit)}}
+	var list api.NoteList
+	_, err := c.do(ctx, http.MethodGet, "/v1/search?"+q.Encode(), nil, &list)
+	return list.Notes, err
+}
+
+func (c *Client) do(ctx context.Context, method, path string, in, out any) (int, error) {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		body = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, body)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	if in != nil {
@@ -58,15 +89,15 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		var e api.Error
 		if json.NewDecoder(resp.Body).Decode(&e) == nil && e.Error != "" {
-			return fmt.Errorf("%s: %s", resp.Status, e.Error)
+			return resp.StatusCode, fmt.Errorf("%s: %s", resp.Status, e.Error)
 		}
-		return fmt.Errorf("%s", resp.Status)
+		return resp.StatusCode, fmt.Errorf("%s", resp.Status)
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return resp.StatusCode, json.NewDecoder(resp.Body).Decode(out)
 }
