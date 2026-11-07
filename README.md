@@ -7,7 +7,21 @@ Self-hosted база идей и заметок. Один бинарник `epi`
 go install github.com/splav/epinoema/cmd/epi@latest
 ```
 
-## Локальный запуск
+## Установка на macOS для ежедневной работы
+
+```sh
+./scripts/setup-macos.sh
+```
+
+Скрипт ставит `epi` в `~/go/bin`, применяет миграции, выпускает токены человека и агента
+в `~/.config/epi/` (права 600), запускает `epi serve` как launchd-агент (поднимается при входе,
+перезапускается при падении, лог в `~/Library/Logs/epinoema.log`) и подключает MCP-сервер
+и skill к Claude Code. Повторный запуск обновляет бинарник и сервис, токены не трогает.
+Нужны Go, PostgreSQL 16 из brew и файлы словаря (ниже).
+
+Остановить сервис: `launchctl bootout gui/$(id -u)/dev.epinoema.serve`.
+
+## Локальный запуск вручную
 
 Нужны Go 1.24+ и PostgreSQL 16+ (`brew install go postgresql@16`).
 

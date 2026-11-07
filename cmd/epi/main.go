@@ -2,8 +2,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"syscall"
 )
 
 const usage = `epi — база идей и заметок
@@ -12,6 +14,8 @@ const usage = `epi — база идей и заметок
   epi migrate                 применить миграции (EPI_ADMIN_DB — владелец таблиц)
   epi serve [-addr host:port] запустить API (EPI_DB — роль epinoema_app)
   epi token create -user H    выпустить токен (EPI_DB); -actor user|agent, -name cli
+
+Переменные можно положить в ~/.config/epi/env (KEY=VALUE); окружение важнее файла.
 
 Клиент (EPI_URL, EPI_TOKEN):
   epi add [флаги] "текст"     записать во входящие; без текста читает stdin
@@ -26,6 +30,7 @@ func main() {
 		os.Exit(2)
 	}
 	cmd, args := os.Args[1], os.Args[2:]
+	loadConfig()
 
 	var err error
 	switch cmd {
@@ -52,6 +57,9 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "epi:", err)
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			fmt.Fprintln(os.Stderr, "epi: сервер не отвечает — запущен ли epi serve? (EPI_URL="+os.Getenv("EPI_URL")+")")
+		}
 		os.Exit(1)
 	}
 }
