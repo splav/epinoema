@@ -1,0 +1,65 @@
+# Epinoema
+
+Self-hosted база идей и заметок. Один бинарник `epi`: сервер API, админка и CLI.
+Статус: ранний MVP, этап 0 (захват). Лицензия MIT.
+
+```sh
+go install github.com/splav/epinoema/cmd/epi@latest
+```
+
+## Локальный запуск
+
+Нужны Go 1.24+ и PostgreSQL 16+ (`brew install go postgresql@16`).
+
+```sh
+go build -o bin/epi ./cmd/epi
+
+createdb epinoema
+EPI_ADMIN_DB=postgres://localhost/epinoema bin/epi migrate
+
+# Роли создаются миграцией без LOGIN. Сервис ходит под epinoema_app,
+# а не под владельцем таблиц: владелец обходит RLS.
+psql -d epinoema -c "ALTER ROLE epinoema_app LOGIN"   # на сервере ещё PASSWORD '…'
+
+export EPI_DB=postgres://epinoema_app@localhost/epinoema
+bin/epi token create -user $USER -name cli    # токен показывается один раз
+bin/epi serve
+```
+
+В другом терминале:
+
+```sh
+export EPI_TOKEN=epi_…            # EPI_URL по умолчанию http://127.0.0.1:7777
+bin/epi add "идея"
+echo "длинная мысль" | bin/epi add -t "заголовок" -tag a,b -p проект -i 2
+bin/epi inbox
+```
+
+Агенту — отдельный токен: `bin/epi token create -user $USER -actor agent -name claude-code`.
+Так в истории правок видно, что менял агент.
+
+## Разработка
+
+```sh
+sqlc generate      # internal/db/queries/*.sql → internal/db/dbq
+EPI_TEST_ADMIN_DB=postgres://localhost/postgres go test ./...
+```
+
+Тесты создают временную базу на каждый тест и удаляют её. Без `EPI_TEST_ADMIN_DB`
+интеграционные тесты пропускаются.
+
+| Путь | Что там |
+| --- | --- |
+| `cmd/epi` | подкоманды: `migrate`, `serve`, `token create`, `add`, `inbox` |
+| `internal/db/migrations` | goose-миграции, встроены в бинарник |
+| `internal/db/queries` | SQL для sqlc; `dbq` — сгенерированный код, руками не править |
+| `internal/db` | пул, миграции, `InTx` — транзакция от имени пользователя |
+| `internal/server` | HTTP API и авторизация по токену |
+| `internal/api` | JSON-контракт API для сервера и клиентов |
+| `internal/client` | HTTP-клиент для CLI |
+
+## Известные ограничения
+
+- Произвольные read-only запросы агента (этап 2) смогут вызвать `set_config` и выдать себя
+  за другого пользователя. Закрыть до этапа 3, до появления других пользователей.
+- При удалении заметки её история удаляется вместе с ней.
