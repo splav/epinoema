@@ -95,6 +95,23 @@ func (q *Queries) GetActiveToken(ctx context.Context, tokenHash []byte) (GetActi
 	return i, err
 }
 
+const getUser = `-- name: GetUser :one
+SELECT id, handle, display_name, oidc_sub, created_at FROM users WHERE id = $1
+`
+
+func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
+	row := q.db.QueryRow(ctx, getUser, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Handle,
+		&i.DisplayName,
+		&i.OidcSub,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserByHandle = `-- name: GetUserByHandle :one
 SELECT id, handle, display_name, oidc_sub, created_at FROM users WHERE handle = $1
 `

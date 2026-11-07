@@ -15,3 +15,6 @@ INSERT INTO users (handle) VALUES ($1) RETURNING *;
 INSERT INTO api_tokens (user_id, actor, name, token_hash)
 VALUES ($1, $2, $3, $4)
 RETURNING id, user_id, actor, name, created_at;
+
+-- name: GetUser :one
+SELECT * FROM users WHERE id = $1;

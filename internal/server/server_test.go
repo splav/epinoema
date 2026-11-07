@@ -123,6 +123,8 @@ func (e *env) do(t *testing.T, method, path, tok string, body any, out any) int 
 	return resp.StatusCode
 }
 
+func urlq(s string) string { return url.QueryEscape(s) }
+
 func TestAuth(t *testing.T) {
 	e := newEnv(t)
 	_, tok := e.user(t, "alice", "user")

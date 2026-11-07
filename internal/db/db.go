@@ -8,6 +8,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,8 +40,24 @@ func Migrate(ctx context.Context, dsn string) ([]*goose.MigrationResult, error) 
 }
 
 // Open создаёт пул и проверяет соединение.
+//
+// Словарь hunspell грузится в память каждого соединения: около 25 МБ и 200 мс
+// на первый поисковый запрос. Поэтому пул по умолчанию маленький (меняется
+// параметром pool_max_conns в DSN), а словарь грузится сразу при подключении,
+// а не на первом запросе пользователя.
 func Open(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(dsn, "pool_max_conns") {
+		cfg.MaxConns = 4
+	}
+	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+		_, err := c.Exec(ctx, "SELECT to_tsvector('epi_ru', 'прогрев')")
+		return err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}

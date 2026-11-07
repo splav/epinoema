@@ -39,3 +39,46 @@ type NoteList struct {
 type Error struct {
 	Error string `json:"error"`
 }
+
+// UpdateMeta — тело PATCH /v1/notes/{id}. Меняются только переданные поля:
+// "" очищает title и project, importance 0 очищает важность, tags заменяют список.
+type UpdateMeta struct {
+	Title      *string   `json:"title,omitempty"`
+	Kind       *string   `json:"kind,omitempty"`
+	Status     *string   `json:"status,omitempty"`
+	Importance *int16    `json:"importance,omitempty"`
+	Project    *string   `json:"project,omitempty"`
+	Tags       *[]string `json:"tags,omitempty"`
+}
+
+func (m UpdateMeta) Empty() bool {
+	return m.Title == nil && m.Kind == nil && m.Status == nil &&
+		m.Importance == nil && m.Project == nil && m.Tags == nil
+}
+
+// Link — связь между заметками; kind: related, derived_from, supersedes.
+type Link struct {
+	SrcID     string    `json:"src_id"`
+	DstID     string    `json:"dst_id"`
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateLink struct {
+	SrcID string `json:"src_id"`
+	DstID string `json:"dst_id"`
+	Kind  string `json:"kind,omitempty"`
+}
+
+// NoteDetail — ответ GET /v1/notes/{id}: заметка и все её видимые связи.
+type NoteDetail struct {
+	Note
+	Links []Link `json:"links"`
+}
+
+// Me — ответ GET /v1/me: чей токен и кто он, человек или агент.
+type Me struct {
+	UserID string `json:"user_id"`
+	Handle string `json:"handle"`
+	Actor  string `json:"actor"`
+}

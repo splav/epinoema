@@ -11,6 +11,16 @@ go install github.com/splav/epinoema/cmd/epi@latest
 
 Нужны Go 1.24+ и PostgreSQL 16+ (`brew install go postgresql@16`).
 
+Поиск использует русский словарь hunspell. Его два файла нужно положить в каталог
+словарей Postgres, иначе миграция остановится с ошибкой:
+
+```sh
+git clone --depth 1 https://github.com/postgrespro/hunspell_dicts /tmp/hunspell_dicts
+cp /tmp/hunspell_dicts/hunspell_ru_ru/ru_ru.{dict,affix} "$(pg_config --sharedir)/tsearch_data/"
+```
+
+Словарь — Alexander I. Lebedev, лицензия BSD-3 (`hunspell_ru_ru/license` в том же репозитории).
+
 ```sh
 go build -o bin/epi ./cmd/epi
 
@@ -63,3 +73,5 @@ EPI_TEST_ADMIN_DB=postgres://localhost/postgres go test ./...
 - Произвольные read-only запросы агента (этап 2) смогут вызвать `set_config` и выдать себя
   за другого пользователя. Закрыть до этапа 3, до появления других пользователей.
 - При удалении заметки её история удаляется вместе с ней.
+- Поиск находит формы одного слова, но не слова с разными корнями («человек» и «люди»)
+  и не сленг, которого нет в словаре («деплой» и «деплоя»).

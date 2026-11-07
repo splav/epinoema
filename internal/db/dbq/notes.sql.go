@@ -167,3 +167,131 @@ func (q *Queries) ListNotesByStatus(ctx context.Context, arg ListNotesByStatusPa
 	}
 	return items, nil
 }
+
+const searchNotes = `-- name: SearchNotes :many
+SELECT n.id, n.title, n.body, n.kind, n.status, n.importance, n.project, n.tags, n.props, n.created_at, n.updated_at
+FROM notes n, websearch_to_tsquery('epi_ru', $1::text) q
+WHERE n.search @@ q OR $1::text <% n.title
+ORDER BY greatest(ts_rank(n.search, q), word_similarity($1::text, coalesce(n.title, ''))) DESC, n.updated_at DESC
+LIMIT $2
+`
+
+type SearchNotesParams struct {
+	Query string
+	Lim   int32
+}
+
+type SearchNotesRow struct {
+	ID         string
+	Title      *string
+	Body       string
+	Kind       string
+	Status     string
+	Importance *int16
+	Project    *string
+	Tags       []string
+	Props      json.RawMessage
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// Полнотекстовый поиск по title и body плюс нечёткое совпадение заголовка (pg_trgm),
+// чтобы находились заголовки с опечатками. word_similarity (<%) сравнивает запрос
+// с самым похожим куском заголовка, а не со всем заголовком: иначе длинные
+// заголовки никогда не проходят порог.
+func (q *Queries) SearchNotes(ctx context.Context, arg SearchNotesParams) ([]SearchNotesRow, error) {
+	rows, err := q.db.Query(ctx, searchNotes, arg.Query, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchNotesRow{}
+	for rows.Next() {
+		var i SearchNotesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Body,
+			&i.Kind,
+			&i.Status,
+			&i.Importance,
+			&i.Project,
+			&i.Tags,
+			&i.Props,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateNoteMeta = `-- name: UpdateNoteMeta :one
+UPDATE notes SET
+  title      = CASE WHEN $1::text IS NULL THEN title ELSE nullif($1::text, '') END,
+  kind       = coalesce($2::text, kind),
+  status     = coalesce($3::text, status),
+  importance = CASE WHEN $4::smallint IS NULL THEN importance ELSE nullif($4::smallint, 0) END,
+  project    = CASE WHEN $5::text IS NULL THEN project ELSE nullif($5::text, '') END,
+  tags       = coalesce($6::text[], tags)
+WHERE id = $7
+RETURNING id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
+`
+
+type UpdateNoteMetaParams struct {
+	Title      *string
+	Kind       *string
+	Status     *string
+	Importance *int16
+	Project    *string
+	Tags       []string
+	ID         string
+}
+
+type UpdateNoteMetaRow struct {
+	ID         string
+	Title      *string
+	Body       string
+	Kind       string
+	Status     string
+	Importance *int16
+	Project    *string
+	Tags       []string
+	Props      json.RawMessage
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// Меняются только переданные поля. Пустая строка очищает title и project,
+// importance = 0 очищает важность, tags заменяются целиком.
+func (q *Queries) UpdateNoteMeta(ctx context.Context, arg UpdateNoteMetaParams) (UpdateNoteMetaRow, error) {
+	row := q.db.QueryRow(ctx, updateNoteMeta,
+		arg.Title,
+		arg.Kind,
+		arg.Status,
+		arg.Importance,
+		arg.Project,
+		arg.Tags,
+		arg.ID,
+	)
+	var i UpdateNoteMetaRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Body,
+		&i.Kind,
+		&i.Status,
+		&i.Importance,
+		&i.Project,
+		&i.Tags,
+		&i.Props,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
