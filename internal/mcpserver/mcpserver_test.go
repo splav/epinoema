@@ -59,7 +59,7 @@ func TestTools(t *testing.T) {
 	for _, tool := range res.Tools {
 		names = append(names, tool.Name)
 	}
-	want := "add_note,get_note,link,list_inbox,search,update_meta"
+	want := "add_note,get_note,link,list_inbox,list_reports,query,run_report,save_report,search,update_meta"
 	if got := strings.Join(names, ","); got != want {
 		t.Errorf("tools = %s, want %s", got, want)
 	}
@@ -129,5 +129,52 @@ func TestTriage(t *testing.T) {
 	})
 	if err != nil || actor != "agent" {
 		t.Errorf("автор правки: %q (err %v), want agent", actor, err)
+	}
+}
+
+func TestReportsAndQuery(t *testing.T) {
+	e := testenv.New(t)
+	_, agentTok := e.User(t, "alice", "agent")
+	cs := session(t, e, agentTok)
+	call(t, cs, "add_note", map[string]any{"body": "про поиск", "kind": "idea", "project": "epi"}, nil)
+	call(t, cs, "add_note", map[string]any{"body": "про отчёты", "kind": "decision", "project": "epi"}, nil)
+
+	var review struct {
+		Sections []struct {
+			Title string
+			Notes []mcpserver.Brief
+		}
+	}
+	call(t, cs, "run_report", map[string]any{"name": "review"}, &review)
+	if len(review.Sections) != 3 || len(review.Sections[0].Notes) != 2 {
+		t.Errorf("review: %+v", review)
+	}
+
+	var saved struct{ Created bool }
+	res := call(t, cs, "save_report", map[string]any{"name": "ideas", "spec": map[string]any{"kind": []string{"idea"}}}, &saved)
+	if res.IsError || !saved.Created {
+		t.Fatalf("save_report: %+v", res.Content)
+	}
+	var ideas struct {
+		Sections []struct{ Notes []mcpserver.Brief }
+	}
+	call(t, cs, "run_report", map[string]any{"name": "ideas"}, &ideas)
+	if len(ideas.Sections) != 1 || len(ideas.Sections[0].Notes) != 1 || ideas.Sections[0].Notes[0].Snippet != "про поиск" {
+		t.Errorf("ideas: %+v", ideas)
+	}
+	if res := call(t, cs, "save_report", map[string]any{"name": "bad", "spec": map[string]any{"kind": []string{"ideas"}}}, nil); !res.IsError {
+		t.Error("save_report с неверным kind прошёл")
+	}
+
+	var q struct {
+		Rows      []map[string]any
+		Truncated bool
+	}
+	call(t, cs, "query", map[string]any{"sql": "select kind, count(*) as n from notes group by kind order by kind;"}, &q)
+	if len(q.Rows) != 2 || q.Rows[0]["kind"] != "decision" || q.Rows[0]["n"] != float64(1) {
+		t.Errorf("query: %+v", q)
+	}
+	if res := call(t, cs, "query", map[string]any{"sql": "select token_hash from api_tokens"}, nil); !res.IsError {
+		t.Error("query к api_tokens прошёл")
 	}
 }

@@ -25,7 +25,8 @@ const instructions = `Epinoema — база идей и заметок поль�
 - Записывая мысль пользователя (add_note), сохраняй текст как сказано, не переписывай и не дополняй.
 - Разбирая входящие (list_inbox), сначала предложи тип, теги, проект и связи для каждой заметки и дождись подтверждения; только потом вызывай update_meta и link.
 - Текст заметки не меняется никогда; важность — только если пользователь сам её назвал.
-- Перед тем как придумать новый тег или проект, поищи похожие заметки (search) и переиспользуй существующие.`
+- Перед тем как придумать новый тег или проект, поищи похожие заметки (search) и переиспользуй существующие.
+- Еженедельное ревью — run_report(name="review"); разовые вопросы по заметкам — query, сохранять отчёт (save_report) только по просьбе.`
 
 const snippetLen = 280
 
@@ -64,6 +65,30 @@ func New(c *client.Client) *mcp.Server {
 		Description: "Связать две заметки. Повторная связь не создаёт дубля.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true},
 	}, t.link)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_reports",
+		Description: "Сохранённые отчёты: встроенные (review — еженедельное ревью, inbox, stale, week, all) и созданные пользователем.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, t.listReports)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "run_report",
+		Description: "Выполнить сохранённый отчёт. project и tags сужают каждую секцию: «всё по проекту X» — run_report(name=all, project=X).",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, t.runReport)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "save_report",
+		Description: "Сохранить отчёт как фильтр, чтобы пользователь запускал его сам (epi report NAME). " +
+			"Сохраняй, только если пользователь попросил; одноразовый вопрос решай через query.",
+		Annotations: &mcp.ToolAnnotations{IdempotentHint: true},
+	}, t.saveReport)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "query",
+		Description: "Разовый отчёт произвольным SELECT по заметкам пользователя (PostgreSQL). Только чтение, таймаут 5 с, до 500 строк. " +
+			"Доступны таблицы notes(id, owner_id, title, body, kind, status, importance, project, tags text[], props jsonb, created_at, updated_at), " +
+			"links(src_id, dst_id, kind, created_at), revisions(note_id, snapshot jsonb, actor, created_at), reports(name, spec). " +
+			"Видны только заметки пользователя и выданные ему.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, t.query)
 	return s
 }
 
@@ -246,4 +271,81 @@ func orDefault(v, def int) int {
 		return def
 	}
 	return v
+}
+
+type ListReportsOut struct {
+	Reports []api.Report `json:"reports"`
+}
+
+func (t tools) listReports(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, ListReportsOut, error) {
+	reports, err := t.c.ListReports(ctx)
+	return nil, ListReportsOut{Reports: reports}, err
+}
+
+type RunReportIn struct {
+	Name    string   `json:"name" jsonschema:"имя отчёта"`
+	Project string   `json:"project,omitempty" jsonschema:"только этот проект"`
+	Tags    []string `json:"tags,omitempty" jsonschema:"только заметки хотя бы с одним из тегов"`
+}
+
+type SectionOut struct {
+	Title string  `json:"title"`
+	Notes []Brief `json:"notes"`
+}
+
+type RunReportOut struct {
+	Name     string       `json:"name"`
+	Sections []SectionOut `json:"sections"`
+}
+
+func (t tools) runReport(ctx context.Context, _ *mcp.CallToolRequest, in RunReportIn) (*mcp.CallToolResult, RunReportOut, error) {
+	res, err := t.c.RunReport(ctx, in.Name, in.Project, in.Tags)
+	if err != nil {
+		return nil, RunReportOut{}, err
+	}
+	out := RunReportOut{Name: res.Name, Sections: make([]SectionOut, 0, len(res.Sections))}
+	for _, sec := range res.Sections {
+		out.Sections = append(out.Sections, SectionOut{Title: sec.Title, Notes: briefs(sec.Notes).Notes})
+	}
+	return nil, out, nil
+}
+
+type SaveReportIn struct {
+	Name string         `json:"name" jsonschema:"имя: латиница в нижнем регистре, цифры, - и _"`
+	Spec api.ReportSpec `json:"spec" jsonschema:"фильтр или sections с фильтрами"`
+}
+
+type SaveReportOut struct {
+	Created bool `json:"created" jsonschema:"false, если отчёт с таким именем перезаписан"`
+}
+
+func (t tools) saveReport(ctx context.Context, _ *mcp.CallToolRequest, in SaveReportIn) (*mcp.CallToolResult, SaveReportOut, error) {
+	created, err := t.c.SaveReport(ctx, in.Name, in.Spec)
+	return nil, SaveReportOut{Created: created}, err
+}
+
+type QueryIn struct {
+	SQL   string `json:"sql" jsonschema:"один SELECT; точка с запятой в конце не нужна"`
+	Limit int    `json:"limit,omitempty" jsonschema:"сколько строк вернуть, по умолчанию 100, не больше 500"`
+}
+
+type QueryOut struct {
+	Rows      []map[string]any `json:"rows"`
+	Truncated bool             `json:"truncated" jsonschema:"true, если строк было больше limit"`
+}
+
+func (t tools) query(ctx context.Context, _ *mcp.CallToolRequest, in QueryIn) (*mcp.CallToolResult, QueryOut, error) {
+	res, err := t.c.Query(ctx, api.Query{SQL: in.SQL, Limit: in.Limit})
+	if err != nil {
+		return nil, QueryOut{}, err
+	}
+	out := QueryOut{Rows: make([]map[string]any, 0, len(res.Rows)), Truncated: res.Truncated}
+	for _, raw := range res.Rows {
+		var row map[string]any
+		if err := json.Unmarshal(raw, &row); err != nil {
+			return nil, QueryOut{}, err
+		}
+		out.Rows = append(out.Rows, row)
+	}
+	return nil, out, nil
 }

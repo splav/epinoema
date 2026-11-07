@@ -54,7 +54,7 @@ type Report struct {
 	ID        string
 	OwnerID   string
 	Name      string
-	Spec      []byte
+	Spec      json.RawMessage
 	CreatedAt time.Time
 }
 

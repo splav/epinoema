@@ -27,3 +27,5 @@ sql:
               pointer: true
           - column: notes.props
             go_type: encoding/json.RawMessage
+          - column: reports.spec
+            go_type: encoding/json.RawMessage

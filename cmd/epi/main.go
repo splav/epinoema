@@ -16,6 +16,7 @@ const usage = `epi — база идей и заметок
 Клиент (EPI_URL, EPI_TOKEN):
   epi add [флаги] "текст"     записать во входящие; без текста читает stdin
   epi inbox [-n 50]           показать входящие
+  epi report [NAME]           отчёты; epi report review — еженедельное ревью
   epi mcp                     MCP-сервер для агента по stdio; токен с -actor agent
 `
 
@@ -38,6 +39,8 @@ func main() {
 		err = runAdd(args)
 	case "inbox":
 		err = runInbox(args)
+	case "report":
+		err = runReport(args)
 	case "mcp":
 		err = runMCP(args)
 	case "help", "-h", "--help":

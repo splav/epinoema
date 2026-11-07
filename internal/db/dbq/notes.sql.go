@@ -70,6 +70,92 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (CreateN
 	return i, err
 }
 
+const filterNotes = `-- name: FilterNotes :many
+SELECT id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
+FROM notes
+WHERE ($1::text[] IS NULL OR kind = ANY($1::text[]))
+  AND ($2::text[] IS NULL OR status = ANY($2::text[]))
+  AND ($3::text IS NULL OR project = $3::text)
+  AND ($4::text[] IS NULL OR tags && $4::text[])
+  AND ($5::smallint IS NULL OR importance >= $5::smallint)
+  AND ($6::int IS NULL OR updated_at < now() - make_interval(days => $6::int))
+  AND ($7::int IS NULL OR updated_at >= now() - make_interval(days => $7::int))
+ORDER BY
+  CASE WHEN $8::text = 'importance' THEN importance END DESC NULLS LAST,
+  CASE WHEN $8::text = 'created' THEN created_at END DESC,
+  updated_at DESC
+LIMIT $9
+`
+
+type FilterNotesParams struct {
+	Kinds         []string
+	Statuses      []string
+	Project       *string
+	TagsAny       []string
+	ImportanceGte *int16
+	StaleDays     *int32
+	ChangedDays   *int32
+	OrderBy       string
+	Lim           int32
+}
+
+type FilterNotesRow struct {
+	ID         string
+	Title      *string
+	Body       string
+	Kind       string
+	Status     string
+	Importance *int16
+	Project    *string
+	Tags       []string
+	Props      json.RawMessage
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// Фильтр сохранённых отчётов. NULL в параметре — условие не применяется.
+func (q *Queries) FilterNotes(ctx context.Context, arg FilterNotesParams) ([]FilterNotesRow, error) {
+	rows, err := q.db.Query(ctx, filterNotes,
+		arg.Kinds,
+		arg.Statuses,
+		arg.Project,
+		arg.TagsAny,
+		arg.ImportanceGte,
+		arg.StaleDays,
+		arg.ChangedDays,
+		arg.OrderBy,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FilterNotesRow{}
+	for rows.Next() {
+		var i FilterNotesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Body,
+			&i.Kind,
+			&i.Status,
+			&i.Importance,
+			&i.Project,
+			&i.Tags,
+			&i.Props,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNote = `-- name: GetNote :one
 SELECT id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
 FROM notes

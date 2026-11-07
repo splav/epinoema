@@ -13,7 +13,9 @@ import (
 	"github.com/splav/epinoema/internal/token"
 )
 
-func newEnv(t *testing.T) *testenv.Env { return testenv.New(t) }
+type env = testenv.Env
+
+func newEnv(t *testing.T) *env { return testenv.New(t) }
 
 func urlq(s string) string { return url.QueryEscape(s) }
 

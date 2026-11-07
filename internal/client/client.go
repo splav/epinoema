@@ -69,6 +69,40 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]api.Not
 	return list.Notes, err
 }
 
+func (c *Client) Query(ctx context.Context, q api.Query) (api.QueryResult, error) {
+	var res api.QueryResult
+	_, err := c.do(ctx, http.MethodPost, "/v1/query", q, &res)
+	return res, err
+}
+
+func (c *Client) ListReports(ctx context.Context) ([]api.Report, error) {
+	var list api.ReportList
+	_, err := c.do(ctx, http.MethodGet, "/v1/reports", nil, &list)
+	return list.Reports, err
+}
+
+// RunReport выполняет отчёт; project и tags сужают каждую секцию.
+func (c *Client) RunReport(ctx context.Context, name, project string, tags []string) (api.ReportResult, error) {
+	q := url.Values{"tag": tags}
+	if project != "" {
+		q.Set("project", project)
+	}
+	var res api.ReportResult
+	_, err := c.do(ctx, http.MethodGet, "/v1/reports/"+url.PathEscape(name)+"/run?"+q.Encode(), nil, &res)
+	return res, err
+}
+
+// SaveReport возвращает true, если отчёт создан, и false, если перезаписан.
+func (c *Client) SaveReport(ctx context.Context, name string, spec api.ReportSpec) (bool, error) {
+	code, err := c.do(ctx, http.MethodPut, "/v1/reports/"+url.PathEscape(name), spec, &api.Report{})
+	return code == http.StatusCreated, err
+}
+
+func (c *Client) DeleteReport(ctx context.Context, name string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/v1/reports/"+url.PathEscape(name), nil, nil)
+	return err
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) (int, error) {
 	var body io.Reader
 	if in != nil {
@@ -98,6 +132,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (int,
 			return resp.StatusCode, fmt.Errorf("%s: %s", resp.Status, e.Error)
 		}
 		return resp.StatusCode, fmt.Errorf("%s", resp.Status)
+	}
+	if out == nil {
+		return resp.StatusCode, nil
 	}
 	return resp.StatusCode, json.NewDecoder(resp.Body).Decode(out)
 }

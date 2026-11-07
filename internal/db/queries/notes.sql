@@ -42,3 +42,20 @@ FROM notes n, websearch_to_tsquery('epi_ru', @query::text) q
 WHERE n.search @@ q OR @query::text <% n.title
 ORDER BY greatest(ts_rank(n.search, q), word_similarity(@query::text, coalesce(n.title, ''))) DESC, n.updated_at DESC
 LIMIT @lim;
+
+-- Фильтр сохранённых отчётов. NULL в параметре — условие не применяется.
+-- name: FilterNotes :many
+SELECT id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
+FROM notes
+WHERE (sqlc.narg(kinds)::text[] IS NULL OR kind = ANY(sqlc.narg(kinds)::text[]))
+  AND (sqlc.narg(statuses)::text[] IS NULL OR status = ANY(sqlc.narg(statuses)::text[]))
+  AND (sqlc.narg(project)::text IS NULL OR project = sqlc.narg(project)::text)
+  AND (sqlc.narg(tags_any)::text[] IS NULL OR tags && sqlc.narg(tags_any)::text[])
+  AND (sqlc.narg(importance_gte)::smallint IS NULL OR importance >= sqlc.narg(importance_gte)::smallint)
+  AND (sqlc.narg(stale_days)::int IS NULL OR updated_at < now() - make_interval(days => sqlc.narg(stale_days)::int))
+  AND (sqlc.narg(changed_days)::int IS NULL OR updated_at >= now() - make_interval(days => sqlc.narg(changed_days)::int))
+ORDER BY
+  CASE WHEN @order_by::text = 'importance' THEN importance END DESC NULLS LAST,
+  CASE WHEN @order_by::text = 'created' THEN created_at END DESC,
+  updated_at DESC
+LIMIT @lim;

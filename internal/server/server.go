@@ -46,6 +46,10 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("POST /v1/links", s.createLink)
 	authed.HandleFunc("GET /v1/search", s.search)
 	authed.HandleFunc("POST /v1/query", s.query)
+	authed.HandleFunc("GET /v1/reports", s.listReports)
+	authed.HandleFunc("PUT /v1/reports/{name}", s.saveReport)
+	authed.HandleFunc("DELETE /v1/reports/{name}", s.deleteReport)
+	authed.HandleFunc("GET /v1/reports/{name}/run", s.runReport)
 	mux.Handle("/v1/", s.auth(authed))
 	return mux
 }

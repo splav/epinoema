@@ -1,7 +1,7 @@
 # Epinoema
 
 Self-hosted база идей и заметок. Один бинарник `epi`: сервер API, админка и CLI.
-Статус: ранний MVP, этапы 0–1 (захват и агент). Лицензия MIT.
+Статус: ранний MVP, этапы 0–2 (захват, агент, поиск и отчёты). Лицензия MIT.
 
 ```sh
 go install github.com/splav/epinoema/cmd/epi@latest
@@ -43,7 +43,20 @@ export EPI_TOKEN=epi_…            # EPI_URL по умолчанию http://127
 bin/epi add "идея"
 echo "длинная мысль" | bin/epi add -t "заголовок" -tag a,b -p проект -i 2
 bin/epi inbox
+bin/epi report review          # еженедельное ревью: входящие, забытые важные идеи, неделя
+bin/epi report all -p проект   # всё по проекту
 ```
+
+Отчёт — JSON-фильтр. Встроенные: `review`, `inbox`, `stale`, `week`, `all`. Свой:
+
+```sh
+echo '{"kind":["decision"],"changed_days":30}' | bin/epi report save decisions
+bin/epi report decisions
+```
+
+Поля фильтра: `kind`, `status`, `project`, `tags_any`, `importance_gte`, `stale_days`,
+`changed_days`, `order` (`updated`, `created`, `importance`), `limit`. Несколько секций:
+`{"sections":[{"title":"…","filter":{…}}]}`.
 
 ## Агент (MCP)
 
@@ -57,8 +70,11 @@ claude mcp add epinoema --scope user \
   -- "$PWD/bin/epi" mcp
 ```
 
-Инструменты: `add_note`, `list_inbox`, `search`, `get_note`, `update_meta`, `link`.
-`update_meta` меняет только метаданные, текст заметки агент изменить не может.
+Инструменты: `add_note`, `list_inbox`, `search`, `get_note`, `update_meta`, `link`,
+`list_reports`, `run_report`, `save_report`, `query`. `update_meta` меняет только метаданные,
+текст заметки агент изменить не может. `query` — произвольный SELECT для разовых отчётов:
+под ролью `epinoema_agent_ro`, только чтение, с таймаутом 5 с; строки режет RLS, токены и
+пользователи недоступны, подменить пользователя нельзя (`TestQueryCannotEscape`).
 
 Правила записи и разбора входящих — в [`skills/epinoema-inbox/SKILL.md`](skills/epinoema-inbox/SKILL.md).
 Краткую версию MCP-сервер сам отдаёт клиенту при подключении. Полную подключите в Claude Code:
