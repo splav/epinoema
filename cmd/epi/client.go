@@ -45,6 +45,8 @@ func runAdd(args []string) error {
 	kind := fs.String("k", "", "тип: note, idea, decision, meeting, project")
 	project := fs.String("p", "", "проект")
 	importance := fs.Int("i", 0, "важность 1–3")
+	start := fs.String("start", "", "дата начала YYYY-MM-DD")
+	due := fs.String("due", "", "срок YYYY-MM-DD")
 	var tags listFlag
 	fs.Var(&tags, "tag", "тег; можно повторять или перечислить через запятую")
 	fs.Parse(args)
@@ -68,6 +70,12 @@ func runAdd(args []string) error {
 	}
 	if *project != "" {
 		req.Project = project
+	}
+	if *start != "" {
+		req.StartOn = start
+	}
+	if *due != "" {
+		req.DueOn = due
 	}
 	if *importance != 0 {
 		i := int16(*importance)

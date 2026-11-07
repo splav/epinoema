@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -47,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /v1/search", s.search)
 	authed.HandleFunc("POST /v1/query", s.query)
 	authed.HandleFunc("GET /v1/projects", s.listProjects)
+	authed.HandleFunc("GET /v1/gantt", s.ganttChart)
 	authed.HandleFunc("POST /v1/projects/rename", s.renameProject)
 	authed.HandleFunc("GET /v1/reports", s.listReports)
 	authed.HandleFunc("PUT /v1/reports/{name}", s.saveReport)
@@ -128,6 +130,8 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 			Importance: req.Importance,
 			Project:    req.Project,
 			Tags:       req.Tags,
+			StartOn:    req.StartOn,
+			DueOn:      req.DueOn,
 		})
 		note = api.Note(row)
 		return err
@@ -164,10 +168,29 @@ func (s *Server) listNotes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+// errAmbiguous — короткий id подходит к нескольким заметкам.
+var errAmbiguous = errors.New("ambiguous id prefix")
+
+// idPrefix — начало UUID из вывода CLI: от 4 символов, только hex и дефисы.
+var idPrefix = regexp.MustCompile(`^[0-9a-f-]{4,35}$`)
+
 func (s *Server) getNote(w http.ResponseWriter, r *http.Request) {
+	id := strings.ToLower(r.PathValue("id"))
 	var detail api.NoteDetail
 	err := s.inTx(r, func(q *dbq.Queries) error {
-		row, err := q.GetNote(r.Context(), r.PathValue("id"))
+		if idPrefix.MatchString(id) {
+			ids, err := q.ResolveNotePrefix(r.Context(), id)
+			switch {
+			case err != nil:
+				return err
+			case len(ids) == 0:
+				return pgx.ErrNoRows
+			case len(ids) > 1:
+				return errAmbiguous
+			}
+			id = ids[0]
+		}
+		row, err := q.GetNote(r.Context(), id)
 		if err != nil {
 			return err
 		}
@@ -179,6 +202,10 @@ func (s *Server) getNote(w http.ResponseWriter, r *http.Request) {
 		}
 		return err
 	})
+	if errors.Is(err, errAmbiguous) {
+		writeError(w, http.StatusConflict, "id prefix matches several notes; use more characters")
+		return
+	}
 	if err != nil {
 		s.dbError(w, r, err)
 		return
@@ -202,6 +229,8 @@ func (s *Server) updateMeta(w http.ResponseWriter, r *http.Request) {
 		Status:     req.Status,
 		Importance: req.Importance,
 		Project:    req.Project,
+		StartOn:    req.StartOn,
+		DueOn:      req.DueOn,
 	}
 	if req.Tags != nil {
 		params.Tags = *req.Tags
@@ -325,6 +354,9 @@ func (s *Server) dbError(w http.ResponseWriter, r *http.Request, err error) {
 			return
 		case pgErr.Code == "23514": // допустимые значения задаёт CHECK в схеме
 			writeError(w, http.StatusBadRequest, "invalid value: "+pgErr.ConstraintName)
+			return
+		case pgErr.Code == "22007", pgErr.Code == "22008": // дата не YYYY-MM-DD или вне диапазона
+			writeError(w, http.StatusBadRequest, "invalid date: "+pgErr.Message)
 			return
 		}
 	}

@@ -59,7 +59,7 @@ func TestTools(t *testing.T) {
 	for _, tool := range res.Tools {
 		names = append(names, tool.Name)
 	}
-	want := "add_note,get_note,link,list_inbox,list_projects,list_reports,query,rename_project,run_report,save_report,search,update_meta"
+	want := "add_note,gantt,get_note,link,list_inbox,list_projects,list_reports,query,rename_project,run_report,save_report,search,update_meta"
 	if got := strings.Join(names, ","); got != want {
 		t.Errorf("tools = %s, want %s", got, want)
 	}
@@ -197,5 +197,44 @@ func TestProjects(t *testing.T) {
 	call(t, cs, "list_projects", nil, &list)
 	if len(list.Projects) != 1 || list.Projects[0].Name != "new" {
 		t.Errorf("list_projects: %+v", list)
+	}
+}
+
+func TestGantt(t *testing.T) {
+	e := testenv.New(t)
+	_, agentTok := e.User(t, "alice", "agent")
+	cs := session(t, e, agentTok)
+	var a, b mcpserver.Brief
+	call(t, cs, "add_note", map[string]any{"body": "схема", "project": "epi", "start_on": "2026-11-10", "due_on": "2026-11-12"}, &a)
+	call(t, cs, "add_note", map[string]any{"body": "API", "project": "epi"}, &b)
+	call(t, cs, "add_note", map[string]any{"body": "без дат", "project": "epi"}, nil)
+	call(t, cs, "link", map[string]any{"src_id": b.ID, "dst_id": a.ID, "kind": "depends_on"}, nil)
+	call(t, cs, "update_meta", map[string]any{"id": b.ID, "due_on": "2026-11-12"}, nil)
+
+	var g struct {
+		Bars []struct {
+			Title, Start, End string
+			Late              bool
+		}
+		Warnings []string
+		Mermaid  string
+	}
+	res := call(t, cs, "gantt", map[string]any{"project": "epi"}, &g)
+	if res.IsError {
+		t.Fatalf("gantt: %+v", res.Content)
+	}
+	// «без дат» без зависимостей на диаграмму не попадает; API встаёт после схемы
+	// и не успевает к своему сроку.
+	if len(g.Bars) != 2 || g.Bars[1].Title != "API" || g.Bars[1].Start != "2026-11-13" || !g.Bars[1].Late {
+		t.Errorf("bars: %+v", g.Bars)
+	}
+	if len(g.Warnings) != 1 || !strings.Contains(g.Mermaid, "API :crit, t2, 2026-11-13, 2026-11-14") {
+		t.Errorf("warnings=%v mermaid=\n%s", g.Warnings, g.Mermaid)
+	}
+
+	// Цикл — ошибка инструмента с названиями задач.
+	call(t, cs, "link", map[string]any{"src_id": a.ID, "dst_id": b.ID, "kind": "depends_on"}, nil)
+	if res := call(t, cs, "gantt", map[string]any{"project": "epi"}, nil); !res.IsError {
+		t.Error("цикл не дал ошибки")
 	}
 }

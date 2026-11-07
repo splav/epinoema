@@ -4,6 +4,8 @@ package api
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/splav/epinoema/internal/gantt"
 )
 
 // Note повторяет набор колонок из запросов к notes, поэтому строки sqlc
@@ -18,6 +20,8 @@ type Note struct {
 	Project    *string         `json:"project"`
 	Tags       []string        `json:"tags"`
 	Props      json.RawMessage `json:"props"`
+	StartOn    *Date           `json:"start_on"`
+	DueOn      *Date           `json:"due_on"`
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
 }
@@ -30,6 +34,8 @@ type CreateNote struct {
 	Importance *int16   `json:"importance,omitempty"`
 	Project    *string  `json:"project,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
+	StartOn    *string  `json:"start_on,omitempty"` // YYYY-MM-DD
+	DueOn      *string  `json:"due_on,omitempty"`
 }
 
 type NoteList struct {
@@ -41,7 +47,7 @@ type Error struct {
 }
 
 // UpdateMeta — тело PATCH /v1/notes/{id}. Меняются только переданные поля:
-// "" очищает title и project, importance 0 очищает важность, tags заменяют список.
+// "" очищает title, project и даты, importance 0 очищает важность, tags заменяют список.
 type UpdateMeta struct {
 	Title      *string   `json:"title,omitempty"`
 	Kind       *string   `json:"kind,omitempty"`
@@ -49,14 +55,18 @@ type UpdateMeta struct {
 	Importance *int16    `json:"importance,omitempty"`
 	Project    *string   `json:"project,omitempty"`
 	Tags       *[]string `json:"tags,omitempty"`
+	StartOn    *string   `json:"start_on,omitempty"`
+	DueOn      *string   `json:"due_on,omitempty"`
 }
 
 func (m UpdateMeta) Empty() bool {
 	return m.Title == nil && m.Kind == nil && m.Status == nil &&
-		m.Importance == nil && m.Project == nil && m.Tags == nil
+		m.Importance == nil && m.Project == nil && m.Tags == nil &&
+		m.StartOn == nil && m.DueOn == nil
 }
 
-// Link — связь между заметками; kind: related, derived_from, supersedes.
+// Link — связь между заметками; kind: related, derived_from, supersedes,
+// depends_on (src начинается после окончания dst).
 type Link struct {
 	SrcID     string    `json:"src_id"`
 	DstID     string    `json:"dst_id"`
@@ -115,4 +125,12 @@ type RenameProject struct {
 type RenameProjectResult struct {
 	Renamed int64 `json:"renamed"`
 	Merged  bool  `json:"merged"`
+}
+
+// Gantt — ответ GET /v1/gantt: расписание, предупреждения и готовый Mermaid.
+type Gantt struct {
+	Title    string      `json:"title"`
+	Bars     []gantt.Bar `json:"bars"`
+	Warnings []string    `json:"warnings"`
+	Mermaid  string      `json:"mermaid"`
 }

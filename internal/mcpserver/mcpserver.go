@@ -56,7 +56,7 @@ func New(c *client.Client) *mcp.Server {
 	}, t.getNote)
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "update_meta",
-		Description: "Изменить метаданные заметки: заголовок, тип, статус, важность, проект, теги. Меняются только переданные поля. " +
+		Description: "Изменить метаданные заметки: заголовок, тип, статус, важность, проект, теги, даты начала и срока. Меняются только переданные поля. " +
 			"Текст заметки этим инструментом не меняется. Каждая правка сохраняется в истории с пометкой, что её сделал агент.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true},
 	}, t.updateMeta)
@@ -100,6 +100,12 @@ func New(c *client.Client) *mcp.Server {
 			"Вызывай только после подтверждения пользователя. Каждая заметка получает ревизию в истории.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true},
 	}, t.renameProject)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "gantt",
+		Description: "Диаграмма Ганта по заметкам с датами (start_on, due_on) и зависимостями (link kind=depends_on). " +
+			"Задача без даты начала встаёт после своих зависимостей. Возвращает Mermaid — покажи его пользователю блоком ```mermaid — и предупреждения о сорванных сроках.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, t.gantt)
 	return s
 }
 
@@ -115,6 +121,8 @@ type Brief struct {
 	Importance *int16   `json:"importance,omitempty"`
 	Project    *string  `json:"project,omitempty"`
 	Tags       []string `json:"tags"`
+	StartOn    *string  `json:"start_on,omitempty"`
+	DueOn      *string  `json:"due_on,omitempty"`
 	CreatedAt  string   `json:"created_at"`
 }
 
@@ -130,8 +138,17 @@ func brief(n api.Note) Brief {
 	return Brief{
 		ID: n.ID, Title: n.Title, Snippet: snippet, Kind: n.Kind, Status: n.Status,
 		Importance: n.Importance, Project: n.Project, Tags: n.Tags,
+		StartOn: dateStr(n.StartOn), DueOn: dateStr(n.DueOn),
 		CreatedAt: n.CreatedAt.Format("2006-01-02 15:04"),
 	}
+}
+
+func dateStr(d *api.Date) *string {
+	if d == nil {
+		return nil
+	}
+	s := string(*d)
+	return &s
 }
 
 func briefs(notes []api.Note) BriefList {
@@ -149,6 +166,8 @@ type AddNoteIn struct {
 	Project    string   `json:"project,omitempty" jsonschema:"проект"`
 	Tags       []string `json:"tags,omitempty" jsonschema:"теги"`
 	Importance int16    `json:"importance,omitempty" jsonschema:"важность 1–3, только если её назвал пользователь"`
+	StartOn    string   `json:"start_on,omitempty" jsonschema:"дата начала YYYY-MM-DD, если пользователь её назвал"`
+	DueOn      string   `json:"due_on,omitempty" jsonschema:"срок YYYY-MM-DD, если пользователь его назвал"`
 }
 
 func (t tools) addNote(ctx context.Context, _ *mcp.CallToolRequest, in AddNoteIn) (*mcp.CallToolResult, Brief, error) {
@@ -161,6 +180,12 @@ func (t tools) addNote(ctx context.Context, _ *mcp.CallToolRequest, in AddNoteIn
 	}
 	if in.Importance != 0 {
 		req.Importance = &in.Importance
+	}
+	if in.StartOn != "" {
+		req.StartOn = &in.StartOn
+	}
+	if in.DueOn != "" {
+		req.DueOn = &in.DueOn
 	}
 	n, err := t.c.CreateNote(ctx, req)
 	if err != nil {
@@ -210,6 +235,8 @@ type NoteDetail struct {
 	Project    *string        `json:"project,omitempty"`
 	Tags       []string       `json:"tags"`
 	Props      map[string]any `json:"props"`
+	StartOn    *string        `json:"start_on,omitempty"`
+	DueOn      *string        `json:"due_on,omitempty"`
 	CreatedAt  string         `json:"created_at"`
 	UpdatedAt  string         `json:"updated_at"`
 	Links      []api.Link     `json:"links"`
@@ -223,6 +250,7 @@ func (t tools) getNote(ctx context.Context, _ *mcp.CallToolRequest, in GetNoteIn
 	out := NoteDetail{
 		ID: d.ID, Title: d.Title, Body: d.Body, Kind: d.Kind, Status: d.Status,
 		Importance: d.Importance, Project: d.Project, Tags: d.Tags,
+		StartOn: dateStr(d.StartOn), DueOn: dateStr(d.DueOn),
 		CreatedAt: d.CreatedAt.Format(time.RFC3339), UpdatedAt: d.UpdatedAt.Format(time.RFC3339),
 		Links: d.Links,
 	}
@@ -240,6 +268,8 @@ type UpdateMetaIn struct {
 	Importance *int16    `json:"importance,omitempty" jsonschema:"важность 1–3; 0 убирает важность"`
 	Project    *string   `json:"project,omitempty" jsonschema:"проект; пустая строка убирает проект"`
 	Tags       *[]string `json:"tags,omitempty" jsonschema:"полный новый список тегов; заменяет старый"`
+	StartOn    *string   `json:"start_on,omitempty" jsonschema:"дата начала YYYY-MM-DD; пустая строка убирает"`
+	DueOn      *string   `json:"due_on,omitempty" jsonschema:"срок YYYY-MM-DD; пустая строка убирает"`
 }
 
 func (t tools) updateMeta(ctx context.Context, _ *mcp.CallToolRequest, in UpdateMetaIn) (*mcp.CallToolResult, Brief, error) {
@@ -255,6 +285,7 @@ func (t tools) updateMeta(ctx context.Context, _ *mcp.CallToolRequest, in Update
 	n, err := t.c.UpdateMeta(ctx, in.ID, api.UpdateMeta{
 		Title: in.Title, Kind: in.Kind, Status: in.Status,
 		Importance: in.Importance, Project: in.Project, Tags: in.Tags,
+		StartOn: in.StartOn, DueOn: in.DueOn,
 	})
 	if err != nil {
 		return nil, Brief{}, err
@@ -265,7 +296,7 @@ func (t tools) updateMeta(ctx context.Context, _ *mcp.CallToolRequest, in Update
 type LinkIn struct {
 	SrcID string `json:"src_id" jsonschema:"id заметки, от которой идёт связь"`
 	DstID string `json:"dst_id" jsonschema:"id заметки, на которую идёт связь"`
-	Kind  string `json:"kind,omitempty" jsonschema:"related (по умолчанию), derived_from — src выросла из dst, supersedes — src заменяет dst"`
+	Kind  string `json:"kind,omitempty" jsonschema:"related (по умолчанию), derived_from — src выросла из dst, supersedes — src заменяет dst, depends_on — src начинается после окончания dst"`
 }
 
 type LinkOut struct {
@@ -378,4 +409,14 @@ type RenameProjectIn struct {
 func (t tools) renameProject(ctx context.Context, _ *mcp.CallToolRequest, in RenameProjectIn) (*mcp.CallToolResult, api.RenameProjectResult, error) {
 	res, err := t.c.RenameProject(ctx, in.From, in.To)
 	return nil, res, err
+}
+
+type GanttIn struct {
+	Project string   `json:"project,omitempty" jsonschema:"только этот проект; без него — все заметки с датами"`
+	Tags    []string `json:"tags,omitempty" jsonschema:"только заметки хотя бы с одним из тегов"`
+}
+
+func (t tools) gantt(ctx context.Context, _ *mcp.CallToolRequest, in GanttIn) (*mcp.CallToolResult, api.Gantt, error) {
+	g, err := t.c.Gantt(ctx, in.Project, in.Tags)
+	return nil, g, err
 }

@@ -59,6 +59,9 @@ echo "длинная мысль" | bin/epi add -t "заголовок" -tag a,b 
 bin/epi inbox
 bin/epi report review          # еженедельное ревью: входящие, забытые важные идеи, неделя
 bin/epi report all -p проект   # всё по проекту
+bin/epi set 1a2b3c4d -due 2026-11-20 -status active   # метаданные по короткому id
+bin/epi link -k depends_on B A # B начинается после окончания A
+bin/epi gantt -p проект        # диаграмма Ганта в терминале; -mermaid — текст Mermaid
 bin/epi project                # проекты и число заметок
 bin/epi project rename старое новое   # переименовать или слить с существующим
 ```
@@ -74,6 +77,15 @@ bin/epi report decisions
 `changed_days`, `order` (`updated`, `created`, `importance`), `limit`. Несколько секций:
 `{"sections":[{"title":"…","filter":{…}}]}`.
 
+## Диаграмма Ганта
+
+У заметки могут быть `start_on` и `due_on`, а связь `depends_on` говорит, что заметка
+начинается после окончания другой. На диаграмму попадают заметки с датами или
+зависимостями (кроме `dropped`). Без даты начала задача встаёт на следующий день после
+своих зависимостей, а без них — сегодня; без срока длится один день. Если зависимости
+не дают уложиться в срок, задача помечается, а в выводе есть предупреждение. Цикл
+зависимостей — ошибка с названиями задач.
+
 ## Агент (MCP)
 
 `epi mcp` — stdio MCP-сервер поверх того же API. Агенту нужен свой токен: так в истории
@@ -87,7 +99,7 @@ claude mcp add epinoema --scope user \
 ```
 
 Инструменты: `add_note`, `list_inbox`, `search`, `get_note`, `update_meta`, `link`,
-`list_reports`, `run_report`, `save_report`, `query`, `list_projects`, `rename_project`. `update_meta` меняет только метаданные,
+`list_reports`, `run_report`, `save_report`, `query`, `list_projects`, `rename_project`, `gantt`. `update_meta` меняет только метаданные,
 текст заметки агент изменить не может. `query` — произвольный SELECT для разовых отчётов:
 под ролью `epinoema_agent_ro`, только чтение, с таймаутом 5 с; строки режет RLS, токены и
 пользователи недоступны, подменить пользователя нельзя (`TestQueryCannotEscape`).
@@ -121,13 +133,14 @@ EPI_TEST_ADMIN_DB=postgres://localhost/postgres go test ./...
 
 | Путь | Что там |
 | --- | --- |
-| `cmd/epi` | подкоманды: `migrate`, `serve`, `token create`, `add`, `inbox`, `mcp` |
+| `cmd/epi` | подкоманды: `migrate`, `serve`, `token create`, `add`, `inbox`, `set`, `link`, `report`, `project`, `gantt`, `mcp` |
 | `internal/db/migrations` | goose-миграции, встроены в бинарник |
 | `internal/db/queries` | SQL для sqlc; `dbq` — сгенерированный код, руками не править |
 | `internal/db` | пул, миграции, `InTx` — транзакция от имени пользователя |
 | `internal/server` | HTTP API и авторизация по токену |
 | `internal/api` | JSON-контракт API для сервера и клиентов |
 | `internal/client` | HTTP-клиент для CLI и MCP |
+| `internal/gantt` | расписание по датам и зависимостям, вывод Mermaid и текстом |
 | `internal/mcpserver` | MCP-сервер: инструменты агента поверх клиента |
 | `internal/testenv` | временная база и сервер для интеграционных тестов |
 | `skills/epinoema-inbox` | правила для агента |

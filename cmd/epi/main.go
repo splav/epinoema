@@ -20,8 +20,11 @@ const usage = `epi — база идей и заметок
 Клиент (EPI_URL, EPI_TOKEN):
   epi add [флаги] "текст"     записать во входящие; без текста читает stdin
   epi inbox [-n 50]           показать входящие
+  epi set ID [флаги]          изменить метаданные: -due, -start, -status, -p, -k, -i, -t, -tag
+  epi link [-k K] A B         связать заметки; -k depends_on — A начинается после B
   epi report [NAME]           отчёты; epi report review — еженедельное ревью
   epi project [rename A B]    проекты; rename переименовывает или сливает с B
+  epi gantt [-p P] [-mermaid] диаграмма Ганта по датам и зависимостям
   epi mcp                     MCP-сервер для агента по stdio; токен с -actor agent
 `
 
@@ -45,6 +48,12 @@ func main() {
 		err = runAdd(args)
 	case "inbox":
 		err = runInbox(args)
+	case "set":
+		err = runSet(args)
+	case "link":
+		err = runLink(args)
+	case "gantt":
+		err = runGantt(args)
 	case "project":
 		err = runProject(args)
 	case "report":

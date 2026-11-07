@@ -31,6 +31,36 @@ func (q *Queries) CreateLink(ctx context.Context, arg CreateLinkParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const dependencyLinks = `-- name: DependencyLinks :many
+SELECT src_id, dst_id FROM links
+WHERE kind = 'depends_on' AND src_id = ANY($1::uuid[])
+`
+
+type DependencyLinksRow struct {
+	SrcID string
+	DstID string
+}
+
+func (q *Queries) DependencyLinks(ctx context.Context, ids []string) ([]DependencyLinksRow, error) {
+	rows, err := q.db.Query(ctx, dependencyLinks, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DependencyLinksRow{}
+	for rows.Next() {
+		var i DependencyLinksRow
+		if err := rows.Scan(&i.SrcID, &i.DstID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLinks = `-- name: ListLinks :many
 SELECT src_id, dst_id, kind, created_at
 FROM links

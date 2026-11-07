@@ -135,3 +135,54 @@ func TestSearch(t *testing.T) {
 		t.Errorf("пустой запрос: %d, want 400", code)
 	}
 }
+
+func TestDates(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.User(t, "alice", "user")
+	var n api.Note
+	if code := e.Do(t, "POST", "/v1/notes", tok, api.CreateNote{Body: "задача", StartOn: ptr("2026-11-10"), DueOn: ptr("2026-11-12")}, &n); code != 201 {
+		t.Fatalf("create: %d", code)
+	}
+	if n.StartOn == nil || *n.StartOn != "2026-11-10" || n.DueOn == nil || *n.DueOn != "2026-11-12" {
+		t.Errorf("даты: %v %v", n.StartOn, n.DueOn)
+	}
+	var got api.Note
+	e.Do(t, "PATCH", "/v1/notes/"+n.ID, tok, api.UpdateMeta{StartOn: ptr("")}, &got)
+	if got.StartOn != nil || got.DueOn == nil {
+		t.Errorf("очистка start_on: %v %v", got.StartOn, got.DueOn)
+	}
+	for name, m := range map[string]api.UpdateMeta{
+		"срок раньше начала": {StartOn: ptr("2026-11-20")},
+		"не дата":            {DueOn: ptr("завтра")},
+		"нет такого дня":     {DueOn: ptr("2026-02-30")},
+	} {
+		if code := e.Do(t, "PATCH", "/v1/notes/"+n.ID, tok, m, nil); code != 400 {
+			t.Errorf("%s: %d, want 400", name, code)
+		}
+	}
+	var link api.CreateLink
+	var other api.Note
+	e.Do(t, "POST", "/v1/notes", tok, api.CreateNote{Body: "до неё"}, &other)
+	if code := e.Do(t, "POST", "/v1/links", tok, api.CreateLink{SrcID: n.ID, DstID: other.ID, Kind: "depends_on"}, &link); code != 201 {
+		t.Errorf("depends_on: %d", code)
+	}
+}
+
+func TestShortID(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.User(t, "alice", "user")
+	_, bob := e.User(t, "bob", "user")
+	var n api.Note
+	e.Do(t, "POST", "/v1/notes", tok, api.CreateNote{Body: "x"}, &n)
+	var got api.NoteDetail
+	if code := e.Do(t, "GET", "/v1/notes/"+n.ID[:8], tok, nil, &got); code != 200 || got.ID != n.ID {
+		t.Errorf("короткий id: %d %s", code, got.ID)
+	}
+	if code := e.Do(t, "GET", "/v1/notes/"+n.ID[:8], bob, nil, nil); code != 404 {
+		t.Errorf("короткий id чужой заметки: %d, want 404", code)
+	}
+	// Префикс короче 4 символов не ищется: слишком легко попасть не туда.
+	if code := e.Do(t, "GET", "/v1/notes/"+n.ID[:3], tok, nil, nil); code != 404 {
+		t.Errorf("3 символа: %d, want 404 (слишком коротко)", code)
+	}
+}

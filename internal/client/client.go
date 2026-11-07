@@ -115,6 +115,16 @@ func (c *Client) RenameProject(ctx context.Context, from, to string) (api.Rename
 	return res, err
 }
 
+func (c *Client) Gantt(ctx context.Context, project string, tags []string) (api.Gantt, error) {
+	q := url.Values{"tag": tags}
+	if project != "" {
+		q.Set("project", project)
+	}
+	var g api.Gantt
+	_, err := c.do(ctx, http.MethodGet, "/v1/gantt?"+q.Encode(), nil, &g)
+	return g, err
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) (int, error) {
 	var body io.Reader
 	if in != nil {

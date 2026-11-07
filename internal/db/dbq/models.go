@@ -7,6 +7,8 @@ package dbq
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/splav/epinoema/internal/api"
 )
 
 type ApiToken struct {
@@ -48,6 +50,8 @@ type Note struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	Search     interface{}
+	StartOn    *api.Date
+	DueOn      *api.Date
 }
 
 type Report struct {

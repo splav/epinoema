@@ -9,13 +9,16 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/splav/epinoema/internal/api"
 )
 
 const createNote = `-- name: CreateNote :one
 
-INSERT INTO notes (owner_id, title, body, kind, importance, project, tags)
-VALUES (app_user_id(), $1, $2, $3, $4, $5, $6)
-RETURNING id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
+INSERT INTO notes (owner_id, title, body, kind, importance, project, tags, start_on, due_on)
+VALUES (app_user_id(), $1, $2, $3, $4, $5, $6,
+        $7::text::date, $8::text::date)
+RETURNING id, title, body, kind, status, importance, project, tags, props, start_on, due_on, created_at, updated_at
 `
 
 type CreateNoteParams struct {
@@ -25,6 +28,8 @@ type CreateNoteParams struct {
 	Importance *int16
 	Project    *string
 	Tags       []string
+	StartOn    *string
+	DueOn      *string
 }
 
 type CreateNoteRow struct {
@@ -37,6 +42,8 @@ type CreateNoteRow struct {
 	Project    *string
 	Tags       []string
 	Props      json.RawMessage
+	StartOn    *api.Date
+	DueOn      *api.Date
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -52,6 +59,8 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (CreateN
 		arg.Importance,
 		arg.Project,
 		arg.Tags,
+		arg.StartOn,
+		arg.DueOn,
 	)
 	var i CreateNoteRow
 	err := row.Scan(
@@ -64,6 +73,8 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (CreateN
 		&i.Project,
 		&i.Tags,
 		&i.Props,
+		&i.StartOn,
+		&i.DueOn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -71,7 +82,7 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (CreateN
 }
 
 const filterNotes = `-- name: FilterNotes :many
-SELECT id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
+SELECT id, title, body, kind, status, importance, project, tags, props, start_on, due_on, created_at, updated_at
 FROM notes
 WHERE ($1::text[] IS NULL OR kind = ANY($1::text[]))
   AND ($2::text[] IS NULL OR status = ANY($2::text[]))
@@ -109,6 +120,8 @@ type FilterNotesRow struct {
 	Project    *string
 	Tags       []string
 	Props      json.RawMessage
+	StartOn    *api.Date
+	DueOn      *api.Date
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -143,6 +156,76 @@ func (q *Queries) FilterNotes(ctx context.Context, arg FilterNotesParams) ([]Fil
 			&i.Project,
 			&i.Tags,
 			&i.Props,
+			&i.StartOn,
+			&i.DueOn,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const ganttNotes = `-- name: GanttNotes :many
+SELECT n.id, n.title, n.body, n.kind, n.status, n.importance, n.project, n.tags, n.props, n.start_on, n.due_on, n.created_at, n.updated_at
+FROM notes n
+WHERE n.status <> 'dropped'
+  AND ($1::text IS NULL OR n.project = $1::text)
+  AND ($2::text[] IS NULL OR n.tags && $2::text[])
+  AND (n.start_on IS NOT NULL OR n.due_on IS NOT NULL
+       OR EXISTS (SELECT 1 FROM links l WHERE l.kind = 'depends_on' AND (l.src_id = n.id OR l.dst_id = n.id)))
+ORDER BY coalesce(n.start_on, n.due_on), n.created_at
+LIMIT 500
+`
+
+type GanttNotesParams struct {
+	Project *string
+	TagsAny []string
+}
+
+type GanttNotesRow struct {
+	ID         string
+	Title      *string
+	Body       string
+	Kind       string
+	Status     string
+	Importance *int16
+	Project    *string
+	Tags       []string
+	Props      json.RawMessage
+	StartOn    *api.Date
+	DueOn      *api.Date
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// Кандидаты на диаграмму Ганта: заметки проекта с датами или с зависимостями.
+func (q *Queries) GanttNotes(ctx context.Context, arg GanttNotesParams) ([]GanttNotesRow, error) {
+	rows, err := q.db.Query(ctx, ganttNotes, arg.Project, arg.TagsAny)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GanttNotesRow{}
+	for rows.Next() {
+		var i GanttNotesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Body,
+			&i.Kind,
+			&i.Status,
+			&i.Importance,
+			&i.Project,
+			&i.Tags,
+			&i.Props,
+			&i.StartOn,
+			&i.DueOn,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -157,7 +240,7 @@ func (q *Queries) FilterNotes(ctx context.Context, arg FilterNotesParams) ([]Fil
 }
 
 const getNote = `-- name: GetNote :one
-SELECT id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
+SELECT id, title, body, kind, status, importance, project, tags, props, start_on, due_on, created_at, updated_at
 FROM notes
 WHERE id = $1
 `
@@ -172,6 +255,8 @@ type GetNoteRow struct {
 	Project    *string
 	Tags       []string
 	Props      json.RawMessage
+	StartOn    *api.Date
+	DueOn      *api.Date
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -189,6 +274,8 @@ func (q *Queries) GetNote(ctx context.Context, id string) (GetNoteRow, error) {
 		&i.Project,
 		&i.Tags,
 		&i.Props,
+		&i.StartOn,
+		&i.DueOn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -196,7 +283,7 @@ func (q *Queries) GetNote(ctx context.Context, id string) (GetNoteRow, error) {
 }
 
 const listNotesByStatus = `-- name: ListNotesByStatus :many
-SELECT id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
+SELECT id, title, body, kind, status, importance, project, tags, props, start_on, due_on, created_at, updated_at
 FROM notes
 WHERE status = $1
 ORDER BY created_at DESC
@@ -218,6 +305,8 @@ type ListNotesByStatusRow struct {
 	Project    *string
 	Tags       []string
 	Props      json.RawMessage
+	StartOn    *api.Date
+	DueOn      *api.Date
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -241,6 +330,8 @@ func (q *Queries) ListNotesByStatus(ctx context.Context, arg ListNotesByStatusPa
 			&i.Project,
 			&i.Tags,
 			&i.Props,
+			&i.StartOn,
+			&i.DueOn,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -254,8 +345,33 @@ func (q *Queries) ListNotesByStatus(ctx context.Context, arg ListNotesByStatusPa
 	return items, nil
 }
 
+const resolveNotePrefix = `-- name: ResolveNotePrefix :many
+SELECT id FROM notes WHERE id::text LIKE $1::text || '%' ORDER BY id LIMIT 2
+`
+
+// Короткие id из вывода CLI. Две строки — чтобы отличить однозначный префикс.
+func (q *Queries) ResolveNotePrefix(ctx context.Context, prefix string) ([]string, error) {
+	rows, err := q.db.Query(ctx, resolveNotePrefix, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchNotes = `-- name: SearchNotes :many
-SELECT n.id, n.title, n.body, n.kind, n.status, n.importance, n.project, n.tags, n.props, n.created_at, n.updated_at
+SELECT n.id, n.title, n.body, n.kind, n.status, n.importance, n.project, n.tags, n.props, n.start_on, n.due_on, n.created_at, n.updated_at
 FROM notes n, websearch_to_tsquery('epi_ru', $1::text) q
 WHERE n.search @@ q OR $1::text <% n.title
 ORDER BY greatest(ts_rank(n.search, q), word_similarity($1::text, coalesce(n.title, ''))) DESC, n.updated_at DESC
@@ -277,6 +393,8 @@ type SearchNotesRow struct {
 	Project    *string
 	Tags       []string
 	Props      json.RawMessage
+	StartOn    *api.Date
+	DueOn      *api.Date
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -304,6 +422,8 @@ func (q *Queries) SearchNotes(ctx context.Context, arg SearchNotesParams) ([]Sea
 			&i.Project,
 			&i.Tags,
 			&i.Props,
+			&i.StartOn,
+			&i.DueOn,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -324,9 +444,11 @@ UPDATE notes SET
   status     = coalesce($3::text, status),
   importance = CASE WHEN $4::smallint IS NULL THEN importance ELSE nullif($4::smallint, 0) END,
   project    = CASE WHEN $5::text IS NULL THEN project ELSE nullif($5::text, '') END,
-  tags       = coalesce($6::text[], tags)
-WHERE id = $7
-RETURNING id, title, body, kind, status, importance, project, tags, props, created_at, updated_at
+  tags       = coalesce($6::text[], tags),
+  start_on   = CASE WHEN $7::text IS NULL THEN start_on ELSE nullif($7::text, '')::date END,
+  due_on     = CASE WHEN $8::text IS NULL THEN due_on ELSE nullif($8::text, '')::date END
+WHERE id = $9
+RETURNING id, title, body, kind, status, importance, project, tags, props, start_on, due_on, created_at, updated_at
 `
 
 type UpdateNoteMetaParams struct {
@@ -336,6 +458,8 @@ type UpdateNoteMetaParams struct {
 	Importance *int16
 	Project    *string
 	Tags       []string
+	StartOn    *string
+	DueOn      *string
 	ID         string
 }
 
@@ -349,12 +473,15 @@ type UpdateNoteMetaRow struct {
 	Project    *string
 	Tags       []string
 	Props      json.RawMessage
+	StartOn    *api.Date
+	DueOn      *api.Date
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
 
 // Меняются только переданные поля. Пустая строка очищает title и project,
-// importance = 0 очищает важность, tags заменяются целиком.
+// importance = 0 очищает важность, tags заменяются целиком; пустая строка
+// очищает и даты.
 func (q *Queries) UpdateNoteMeta(ctx context.Context, arg UpdateNoteMetaParams) (UpdateNoteMetaRow, error) {
 	row := q.db.QueryRow(ctx, updateNoteMeta,
 		arg.Title,
@@ -363,6 +490,8 @@ func (q *Queries) UpdateNoteMeta(ctx context.Context, arg UpdateNoteMetaParams) 
 		arg.Importance,
 		arg.Project,
 		arg.Tags,
+		arg.StartOn,
+		arg.DueOn,
 		arg.ID,
 	)
 	var i UpdateNoteMetaRow
@@ -376,6 +505,8 @@ func (q *Queries) UpdateNoteMeta(ctx context.Context, arg UpdateNoteMetaParams) 
 		&i.Project,
 		&i.Tags,
 		&i.Props,
+		&i.StartOn,
+		&i.DueOn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
